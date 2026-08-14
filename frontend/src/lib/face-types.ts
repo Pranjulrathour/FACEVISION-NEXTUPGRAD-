@@ -52,3 +52,5 @@ export type AppSettings = {
 };
 
 // v1
+
+// v2
