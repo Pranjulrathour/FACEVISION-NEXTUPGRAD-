@@ -1,0 +1,30 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: facevision-postgres-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: facevision
+      POSTGRES_PASSWORD: facevision
+      POSTGRES_DB: facevision
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+      - ../../database/migrations/001_init_schema.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U facevision -d facevision"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - facevision-dev-net
+
+volumes:
+  postgres_dev_data:
+    name: facevision_postgres_dev_data
+
+networks:
+  facevision-dev-net:
+    driver: bridge
+    name: facevision-dev-net
