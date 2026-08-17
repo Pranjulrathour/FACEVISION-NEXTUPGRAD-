@@ -48,7 +48,10 @@ CREATE TABLE IF NOT EXISTS face_records (
     box_width DOUBLE PRECISION NOT NULL DEFAULT 0,
     box_height DOUBLE PRECISION NOT NULL DEFAULT 0,
     landmarks JSONB NOT NULL DEFAULT '{}'::jsonb,
-    embedding_vector vector(128),
+    -- embedding_vector column intentionally omitted: pgvector isn't installed on the
+    -- plain postgres:16-alpine image used here. To add real face-recognition embeddings,
+    -- switch to the `pgvector/pgvector:pg16` image, run `CREATE EXTENSION vector;`, then
+    -- `ALTER TABLE face_records ADD COLUMN embedding_vector vector(128);`.
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
