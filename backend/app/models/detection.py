@@ -1,4 +1,5 @@
 from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, JSON, BigInteger
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from datetime import datetime
 
@@ -10,7 +11,7 @@ class DetectionRecord(Base):
 
     id = Column(String, primary_key=True, index=True)
     timestamp = Column(BigInteger, index=True, default=lambda: int(datetime.utcnow().timestamp() * 1000))
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, index=True, default=datetime.utcnow)
     mode = Column(String, index=True)
     face_count = Column(Integer, default=0)
     average_confidence = Column(Float, default=0.0)
@@ -29,11 +30,13 @@ class FaceRecord(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     detection_id = Column(String, ForeignKey("detection_records.id", ondelete="CASCADE"), index=True)
-    confidence = Column(Float)
+    confidence = Column(Float, index=True)
     box_x = Column(Float)
     box_y = Column(Float)
     box_width = Column(Float)
     box_height = Column(Float)
-    landmarks = Column(JSON)
+    landmarks = Column(
+        JSONB().with_variant(JSON, "sqlite"), nullable=False, server_default="{}"
+    )
 
     detection = relationship("DetectionRecord", back_populates="faces")
