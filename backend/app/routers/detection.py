@@ -2,11 +2,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import Optional
 
+from app.core.rate_limit import rate_limiter
+from app.core.security import require_api_key
 from app.database import get_db
 from app.schemas.detection import DetectionCreate, DetectionResponse, DetectionListResponse
 from app.services import detection_service
 
 router = APIRouter()
+_write_rate_limit = rate_limiter("DETECTIONS_RATE_LIMIT_PER_MIN", default=30)
 
 
 def _to_response(record) -> DetectionResponse:
@@ -38,7 +41,11 @@ def _to_response(record) -> DetectionResponse:
     )
 
 
-@router.post("", response_model=DetectionResponse)
+@router.post(
+    "",
+    response_model=DetectionResponse,
+    dependencies=[Depends(require_api_key), Depends(_write_rate_limit)],
+)
 def create(payload: DetectionCreate, db: Session = Depends(get_db)):
     existing = detection_service.get_detection(db, payload.id)
     if existing:
@@ -74,7 +81,7 @@ def get_one(detection_id: str, db: Session = Depends(get_db)):
     return _to_response(record)
 
 
-@router.delete("/{detection_id}")
+@router.delete("/{detection_id}", dependencies=[Depends(require_api_key)])
 def delete_one(detection_id: str, db: Session = Depends(get_db)):
     deleted = detection_service.delete_detection(db, detection_id)
     if not deleted:
