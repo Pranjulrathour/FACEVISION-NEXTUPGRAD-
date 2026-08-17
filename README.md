@@ -120,6 +120,16 @@ npm run dev
 
 Interactive Swagger UI: http://localhost:8000/docs
 
+### Security & rate limiting
+
+| Env var | Default | Effect |
+|---|---|---|
+| `API_KEY` | unset (disabled) | When set, `X-API-Key` is required on `POST /api/detections`, `DELETE /api/detections/{id}`, and `DELETE /api/history` |
+| `DETECTIONS_RATE_LIMIT_PER_MIN` | `30` | Per-IP limit on `POST /api/detections` |
+| `COMPARE_RATE_LIMIT_PER_MIN` | `30` | Per-IP limit on `POST /api/compare` |
+
+Set `API_KEY` before any real deployment — it is intentionally a no-op in local dev so the anonymous-write flow keeps working out of the box.
+
 ## Verification
 
 ```powershell
@@ -134,6 +144,23 @@ cd backend
 pip install -r requirements.txt
 pytest -v
 ```
+
+### Load testing
+
+```powershell
+k6 run deployment/scripts/load-test.js
+# against a different host:
+k6 run -e BASE_URL=http://localhost:8000 deployment/scripts/load-test.js
+```
+
+Ramps to 20 virtual users hitting `/api/health`, `/api/detections`, and `/api/stats`; asserts p95 latency < 500ms and a <1% hard-failure rate (429s from the rate limiter are treated as expected, not failures).
+
+## Known Limitations
+
+- **No auth by default.** `API_KEY` is opt-in (see [Security & rate limiting](#security--rate-limiting)) — set it before deploying anywhere public.
+- **Single-node Postgres.** No replication/failover configured; back up the `facevision_postgres_data` volume yourself.
+- **SQL migration has reserved-but-unused tables.** `users`, `face_gallery`, and `gallery_face_samples` exist in `database/migrations/001_init_schema.sql` for a future face-recognition upgrade but aren't wired into the current SQLAlchemy models/routers.
+- **Rate limiting is in-memory, per-process.** Fine for a single backend instance; won't share limits across multiple replicas — swap for a Redis-backed limiter before horizontally scaling.
 
 ## Deployment Documentation
 
