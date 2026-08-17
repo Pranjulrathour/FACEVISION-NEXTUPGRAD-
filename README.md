@@ -164,10 +164,44 @@ Ramps to 20 virtual users hitting `/api/health`, `/api/detections`, and `/api/st
 
 ## Deployment Documentation
 
-- **Full guide:** [`deployment/DEPLOYMENT.md`](file:///d:/PABLO%20ESCOBAR/FACEVISION/deployment/DEPLOYMENT.md)
-- **Docker / compose:** [`deployment/docker/README.md`](file:///d:/PABLO%20ESCOBAR/FACEVISION/deployment/docker/README.md)
-- **Postgres schema:** [`database/README.md`](file:///d:/PABLO%20ESCOBAR/FACEVISION/database/README.md)
-- **FastAPI backend:** [`backend/README.md`](file:///d:/PABLO%20ESCOBAR/FACEVISION/backend/README.md)
+- **Full guide:** [`deployment/deployment.md`](deployment/deployment.md)
+- **Docker / compose:** [`deployment/docker/readme.md`](deployment/docker/readme.md)
+- **Postgres schema:** [`database/readme.md`](database/readme.md)
+- **FastAPI backend:** [`backend/readme.md`](backend/readme.md)
+
+## Deploy to Railway
+
+Three services in one Railway project: managed Postgres, backend, frontend. Each app service uses its own `railway.toml` + `Dockerfile` committed at its package root — Railway just needs the right **Root Directory** set per service.
+
+### 1. Database
+- New → Database → **PostgreSQL** (Railway's managed plugin). No Dockerfile needed.
+- Copy the plugin's `DATABASE_URL` reference variable for the backend service below.
+
+### 2. Backend service
+- New → GitHub Repo → this repo, set **Root Directory** = `backend`.
+- Railway auto-detects [`backend/railway.toml`](backend/railway.toml) → builds [`backend/Dockerfile`](backend/Dockerfile).
+- Environment variables:
+
+  | Variable | Value |
+  |---|---|
+  | `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` (Railway variable reference to the Postgres plugin) |
+  | `API_KEY` | a real secret — required for production, see [Security & rate limiting](#security--rate-limiting) |
+  | `CORS_ORIGINS` | the frontend service's public URL once it exists, e.g. `https://facevision-frontend.up.railway.app` |
+  | `DETECTIONS_RATE_LIMIT_PER_MIN` / `COMPARE_RATE_LIMIT_PER_MIN` | optional, default `30` |
+
+  `PORT` is injected automatically by Railway — `run.py` already reads it. The legacy `postgres://` scheme some Railway plugins emit is normalized automatically (see `app/database.py`).
+- Health check: `/api/health` (already wired via `railway.toml`).
+- First deploy creates `detection_records` + `face_records` via SQLAlchemy `create_all()` on startup — the full SQL migration (extra reserved tables, views, triggers) is optional and only needed if you extend those features; apply it manually with `psql "$DATABASE_URL" -f database/migrations/001_init_schema.sql` if you want it.
+
+### 3. Frontend service
+- New → GitHub Repo → this repo again, set **Root Directory** = `frontend`.
+- Railway auto-detects [`frontend/railway.toml`](frontend/railway.toml) → builds [`frontend/Dockerfile`](frontend/Dockerfile).
+- Build-time variable (not just runtime — it's inlined into the JS bundle): `NEXT_PUBLIC_API_URL` = the backend service's public URL + `/api`, e.g. `https://facevision-backend.up.railway.app/api`.
+- Health check: `/` (already wired via `railway.toml`).
+- `PORT` is injected automatically; Next's standalone server reads it directly.
+
+### Order matters
+Deploy backend first (get its public URL) → set it as `NEXT_PUBLIC_API_URL` on the frontend → deploy frontend (get its public URL) → set it as `CORS_ORIGINS` on the backend → redeploy the backend once so CORS picks it up.
 
 ## License
 
