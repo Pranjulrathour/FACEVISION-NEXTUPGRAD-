@@ -73,3 +73,13 @@ export function estimateYawn(landmarks: FaceLandmarks): number {
   if (noseToMouth === 0) return 0;
   return mouthWidth / noseToMouth;
 }
+
+export function deepEqualFace(a: Face, b: Face): boolean {
+  return (
+    a.box.x === b.box.x &&
+    a.box.y === b.box.y &&
+    a.box.width === b.box.width &&
+    a.box.height === b.box.height &&
+    Math.abs(a.confidence - b.confidence) < 0.00001
+  );
+}

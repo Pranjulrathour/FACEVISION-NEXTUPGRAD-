@@ -12,7 +12,7 @@ import type {
 } from "@/lib/face-types";
 import { loadImage, validateImage } from "@/lib/image";
 import { YuNetDetector } from "@/lib/yunet";
-import { compareFaces as localCompareFaces } from "@/lib/face-math";
+import { compareFaces as localCompareFaces, deepEqualFace } from "@/lib/face-math";
 import {
   saveDetection as saveLocal,
   getHistory as getLocalHistory,
@@ -928,16 +928,6 @@ export function FaceVision() {
         <span>YuNet · ONNX Runtime Web · {engine || "WebGPU / WASM"}</span>
       </footer>
     </div>
-  );
-}
-
-function deepEqualFace(a: Face, b: Face): boolean {
-  return (
-    a.box.x === b.box.x &&
-    a.box.y === b.box.y &&
-    a.box.width === b.box.width &&
-    a.box.height === b.box.height &&
-    Math.abs(a.confidence - b.confidence) < 0.00001
   );
 }
 
