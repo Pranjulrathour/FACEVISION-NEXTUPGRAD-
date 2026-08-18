@@ -1,14 +1,17 @@
 import type { Face } from "./face-types";
+import { computeBlurScore, computeLuminanceStats, type PixelBuffer } from "./pixel-analysis";
 
 /**
  * Structured quality/failure codes, matching the shape recommended by the
  * face-detection engineering checklist (docs/face-detection-verification-checklist.md
  * §9) instead of a bare success/failure boolean.
  *
- * These are geometry/heuristic-based checks (box size relative to the
- * image, landmark symmetry) — there is no learned quality-scoring model
- * bundled in this app. They catch obviously bad detections; they are not a
- * substitute for a trained face-quality model.
+ * Geometry checks (box size relative to the image, landmark symmetry) never
+ * need pixel data and always run. The pixel-based checks (blur, lighting)
+ * only run when a cropped-face ImageData is supplied — there is no learned
+ * quality-scoring model bundled in this app, so these are heuristics
+ * (variance-of-Laplacian for blur, mean/stdDev luminance for lighting), not
+ * a substitute for a trained face-quality model.
  */
 export type FaceQualityCode =
   | "OK"
@@ -17,6 +20,8 @@ export type FaceQualityCode =
   | "FACE_TOO_SMALL"
   | "LOW_CONFIDENCE"
   | "EXCESSIVE_POSE"
+  | "IMAGE_TOO_BLURRY"
+  | "POOR_LIGHTING"
   | "INVALID_IMAGE";
 
 export type FaceQualityResult = {
@@ -35,6 +40,18 @@ export type FaceQualityOptions = {
   maxPoseAsymmetryRatio?: number;
   /** If true, more than one face in the frame is treated as a quality failure (useful for single-person workflows). Default false. */
   rejectMultipleFaces?: boolean;
+  /** Minimum acceptable variance-of-Laplacian blur score. Heuristic — tune
+   * per camera/use case. Default 40, chosen conservatively low so only
+   * clearly out-of-focus crops get flagged; only checked when a cropped
+   * face ImageData is supplied. */
+  minBlurScore?: number;
+  /** Acceptable mean-luminance range (0-255) before flagging under/over-exposure.
+   * Defaults roughly cover "not near-black" to "not near-white". */
+  minBrightness?: number;
+  maxBrightness?: number;
+  /** Minimum luminance standard deviation before flagging a low-contrast
+   * (washed out / flat) crop. */
+  minContrast?: number;
 };
 
 const DEFAULTS: Required<FaceQualityOptions> = {
@@ -42,6 +59,10 @@ const DEFAULTS: Required<FaceQualityOptions> = {
   minConfidence: 0.75,
   maxPoseAsymmetryRatio: 3,
   rejectMultipleFaces: false,
+  minBlurScore: 40,
+  minBrightness: 25,
+  maxBrightness: 230,
+  minContrast: 10,
 };
 
 function ok(): FaceQualityResult {
@@ -53,12 +74,18 @@ function fail(code: FaceQualityCode, detail: string): FaceQualityResult {
 }
 
 /** Assess a single face's usability. Call assessFaces() first if you need
- * to handle the zero/multiple-face cases for a whole detection result. */
+ * to handle the zero/multiple-face cases for a whole detection result.
+ *
+ * @param faceImageData Optional cropped-face pixel buffer (e.g. from
+ * face-crop.ts's `cropFaceImageData()`). When supplied, adds blur and
+ * lighting checks on top of the always-on geometry checks. Omit it and
+ * this function still runs the geometry-only checks it always has. */
 export function assessFaceQuality(
   face: Face,
   imageWidth: number,
   imageHeight: number,
-  options: FaceQualityOptions = {}
+  options: FaceQualityOptions = {},
+  faceImageData?: PixelBuffer
 ): FaceQualityResult {
   const opts = { ...DEFAULTS, ...options };
 
@@ -94,15 +121,36 @@ export function assessFaceQuality(
     );
   }
 
+  if (faceImageData) {
+    const { mean, stdDev } = computeLuminanceStats(faceImageData);
+    if (mean < opts.minBrightness) {
+      return fail("POOR_LIGHTING", `Face crop is too dark (mean luminance ${mean.toFixed(0)}/255).`);
+    }
+    if (mean > opts.maxBrightness) {
+      return fail("POOR_LIGHTING", `Face crop is overexposed (mean luminance ${mean.toFixed(0)}/255).`);
+    }
+    if (stdDev < opts.minContrast) {
+      return fail("POOR_LIGHTING", `Face crop is low-contrast/washed out (stdDev ${stdDev.toFixed(1)}).`);
+    }
+
+    const blurScore = computeBlurScore(faceImageData);
+    if (blurScore < opts.minBlurScore) {
+      return fail("IMAGE_TOO_BLURRY", `Blur score ${blurScore.toFixed(1)} is below the ${opts.minBlurScore} threshold.`);
+    }
+  }
+
   return ok();
 }
 
-/** Assess an entire detection result (0, 1, or many faces) at once. */
+/** Assess an entire detection result (0, 1, or many faces) at once.
+ * @param primaryFaceImageData Optional cropped-face pixel buffer for the
+ * highest-confidence face — see assessFaceQuality() for what it enables. */
 export function assessFaces(
   faces: Face[],
   imageWidth: number,
   imageHeight: number,
-  options: FaceQualityOptions = {}
+  options: FaceQualityOptions = {},
+  primaryFaceImageData?: PixelBuffer
 ): FaceQualityResult {
   const opts = { ...DEFAULTS, ...options };
 
@@ -114,5 +162,5 @@ export function assessFaces(
   }
   // Assess the most prominent (highest-confidence) face for single-face-style checks.
   const primary = [...faces].sort((a, b) => b.confidence - a.confidence)[0];
-  return assessFaceQuality(primary, imageWidth, imageHeight, options);
+  return assessFaceQuality(primary, imageWidth, imageHeight, options, primaryFaceImageData);
 }
