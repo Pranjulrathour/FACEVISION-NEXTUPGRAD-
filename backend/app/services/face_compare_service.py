@@ -1,6 +1,8 @@
 import math
 from typing import List, Dict, Any
 
+from app.services.embedding_math import cosine_similarity
+
 
 def _euclidean(p1: Dict[str, float], p2: Dict[str, float]) -> float:
     return math.sqrt((p2["x"] - p1["x"]) ** 2 + (p2["y"] - p1["y"]) ** 2)
@@ -14,17 +16,6 @@ def _normalize(landmarks: Dict[str, Any], box: Dict[str, float]) -> List[float]:
         vec.append((p["x"] - box["x"]) / box["width"])
         vec.append((p["y"] - box["y"]) / box["height"])
     return vec
-
-
-def _cosine(a: List[float], b: List[float]) -> float:
-    if len(a) != len(b) or not a:
-        return 0.0
-    dot = sum(x * y for x, y in zip(a, b))
-    na = math.sqrt(sum(x * x for x in a))
-    nb = math.sqrt(sum(x * x for x in b))
-    if na == 0 or nb == 0:
-        return 0.0
-    return dot / (na * nb)
 
 
 def compare_faces(face_a: dict, face_b: dict, threshold: float = 0.78) -> dict:
@@ -42,7 +33,7 @@ def compare_faces(face_a: dict, face_b: dict, threshold: float = 0.78) -> dict:
 
     vec_a = _normalize(lm_a, box_a)
     vec_b = _normalize(lm_b, box_b)
-    sim = max(0.0, min(1.0, _cosine(vec_a, vec_b)))
+    sim = max(0.0, min(1.0, cosine_similarity(vec_a, vec_b)))
     return {
         "similarity": float(sim),
         "isMatch": sim >= threshold,
