@@ -10,8 +10,15 @@ _hits: dict[str, deque] = defaultdict(deque)
 _last_sweep = time.monotonic()
 
 
-def _client_key(request: Request) -> str:
-    return request.client.host if request.client else "unknown"
+def _client_key(request: Request, limiter_id: str) -> str:
+    """Composite key: (which limiter, which client). Without limiter_id,
+    every rate_limiter() instance shares the same _hits bucket per IP --
+    hitting /gallery/enroll would silently consume the budget meant for
+    /detections and vice versa, since they'd all collapse to the same
+    per-IP key. Each call site's env-var name is already unique per route,
+    so it doubles as a stable limiter identifier."""
+    host = request.client.host if request.client else "unknown"
+    return f"{limiter_id}:{host}"
 
 
 def _sweep_stale_entries(now: float) -> None:
@@ -50,7 +57,7 @@ def rate_limiter(max_per_minute_env: str, default: int):
             return
         now = time.monotonic()
         _sweep_stale_entries(now)
-        key = _client_key(request)
+        key = _client_key(request, max_per_minute_env)
         hits = _hits[key]
         while hits and now - hits[0] > _WINDOW_SECONDS:
             hits.popleft()

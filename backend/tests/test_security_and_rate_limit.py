@@ -50,3 +50,22 @@ def test_rate_limiter_tracks_clients_independently(monkeypatch):
     limiter = rate_limiter("TEST_RATE_LIMIT_2", default=100)
     limiter(_FakeRequest("1.1.1.1"))
     limiter(_FakeRequest("2.2.2.2"))  # different client, should not raise
+
+
+def test_rate_limiters_for_different_routes_do_not_share_a_budget(monkeypatch):
+    """Regression test: rate_limiter() instances used to share one global
+    per-IP bucket regardless of which route they guarded, so exhausting
+    one endpoint's limit silently exhausted every other endpoint's limit
+    too for the same client. Each limiter must track its own budget."""
+    monkeypatch.setenv("TEST_RATE_LIMIT_A", "1")
+    monkeypatch.setenv("TEST_RATE_LIMIT_B", "1")
+    limiter_a = rate_limiter("TEST_RATE_LIMIT_A", default=100)
+    limiter_b = rate_limiter("TEST_RATE_LIMIT_B", default=100)
+    same_client = "9.9.9.9"
+
+    limiter_a(_FakeRequest(same_client))
+    with pytest.raises(HTTPException):
+        limiter_a(_FakeRequest(same_client))
+
+    # limiter_b for the same client should still have its own full budget.
+    limiter_b(_FakeRequest(same_client))
