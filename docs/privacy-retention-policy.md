@@ -31,13 +31,31 @@ backend is configured and reachable (`NEXT_PUBLIC_API_URL` is set and the app ca
 embedding computation both run entirely in the browser; only the metadata/vectors above are
 optionally persisted, and only when the user takes an explicit action.
 
+**If a user explicitly registers an account** (checklist §15/§16 — see
+[ADR 0003](adr/0003-minifasnet-liveness-and-jwt-auth.md)):
+- Email address (`users.email`) — used only as a login identifier, never displayed publicly or
+  shared with any third party.
+- A bcrypt password hash (`users.password_hash`) — **never the plaintext password**. Hashing is
+  one-way and salted per-password; the original password cannot be recovered from the stored
+  hash. Password verification failure (wrong password, or a malformed/corrupted hash) is treated
+  identically as "not authenticated" — it never crashes or leaks which case occurred.
+- An optional display name (`users.display_name`), chosen freely by the user.
+- This only happens on an explicit "register" action against `POST /api/v1/auth/register`; it
+  is never automatic, and using the app's detection/gallery features does not require an account.
+- Once logged in, a signed JWT (issued by the backend, stored client-side by whatever the caller
+  chooses — no browser storage mechanism is imposed by the API itself) is used to authenticate
+  subsequent requests. The token contains only the user's internal id and an expiry timestamp —
+  no email, password, or biometric data is embedded in it.
+
 ## Why is it stored?
 
 Detection metadata: to power the app's own History and Stats panels — letting a user revisit
 past detections and see aggregate trends within their own browser session. Gallery embeddings:
 solely to let a user recognize a previously-enrolled identity in later detections — the entire
-point of the feature they explicitly opted into. There is no analytics, advertising, or
-third-party sharing use case for either.
+point of the feature they explicitly opted into. Account credentials: solely to let a user's
+gallery data follow them (via a verified identity) rather than a guessable/unauthenticated
+session id — see "Who can access it?" below. There is no analytics, advertising, or third-party
+sharing use case for any of these.
 
 ## Who can access it?
 
@@ -55,6 +73,12 @@ third-party sharing use case for either.
   `POST /api/gallery/recognize` is intentionally **not** gated behind `API_KEY` (a visitor
   needs to be able to check a face against the gallery to use the feature at all) — it is
   rate-limited instead.
+- **Authenticated users**: if a caller presents a valid JWT (obtained via
+  `POST /api/v1/auth/login` or `.../register`), their gallery reads/writes are scoped to their
+  real user id — derived from the verified token, not from any client-supplied
+  `userSessionId` — so one authenticated user cannot read or delete another authenticated
+  user's gallery entries by guessing an id or a session string. This does not change the
+  anonymous-session behavior described above for callers who don't authenticate.
 
 ## How long is it stored?
 
@@ -72,6 +96,10 @@ an operator runs the retention-purge script. As of this update, retention is enf
   enrolled identity is meant to be durable (that's the point of enrolling it), not something
   that silently expires. If you want gallery entries to also expire automatically, that's a
   gap to fill, not something the current purge script does.
+
+**User accounts are not covered by `RETENTION_DAYS`** either — an account persists indefinitely
+until deleted by an operator directly against the database (there is currently no
+self-service "delete my account" endpoint; this is a tracked gap, not a design decision).
 
 ## How is it deleted?
 

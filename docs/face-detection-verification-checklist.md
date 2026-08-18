@@ -17,7 +17,7 @@ as the system evolves, don't let it go stale.
 |---|---|---|
 | **1 — Foundation** | §6 §7 §9 §12 §14 §20 | ✅ Done — magic-byte validation, pixel-level blur/lighting checks, inference timeout, `/api/v1` versioning, centralized config |
 | **2 — Recognition** | §2 §5 §10 §28 | ✅ Done — real SFace embeddings + face alignment, enroll/recognize gallery, `BiometricProfiles`-style tables activated |
-| 3 — Security | §11 §15 §16 §24 | ⏳ Not started — MiniFASNet anti-spoofing, JWT auth, security test suite |
+| **3 — Security** | §11 §15 §16 §24 | ✅ Done — real MiniFASNet ONNX liveness check, JWT auth + bcrypt with cryptographically-bound gallery scoping, dedicated adversarial security test suite. Frontend auth UI not yet built (tracked gap) |
 | 4 — Measurement | §4 §13 §22 §23 §25 §33 §36 | ⏳ Not started — evaluation harness (needs a dataset you supply), load + memory profiling |
 | 5 — Ops/Governance | §18 §26 §27 §37 §38 §40–43 | ⏳ Not started — `/metrics` + percentiles, Redis-backed rate limiter, caching, PR/governance workflow |
 
@@ -44,7 +44,7 @@ files/services — not a single tightly-coupled script. Good starting position.
 | Face Detection | [x] YuNet ONNX, client-side, [yunet.ts](../frontend/src/lib/yunet.ts) |
 | Face Recognition (deep embeddings) | [x] SFace ONNX, 128-d embeddings, client-side — [sface.ts](../frontend/src/lib/sface.ts), see §10 |
 | Face Verification | [x] real embedding-based (gallery recognize) **and** [~] landmark-geometry (Compare panel) — two distinct, intentionally separate paths, see §10 |
-| Face Liveness Detection | [~] heuristic passive-liveness signal only (frame-to-frame landmark movement), **not** certified anti-spoofing — see §11 |
+| Face Liveness Detection | [x] real trained anti-spoofing model (MiniFASNet V2, user-triggered) **plus** [~] the original passive-heuristic signal (automatic, camera mode) — not gated into enroll/recognize, see §11 |
 | Multiple-face detection | [x] supported, NMS-filtered |
 | Face quality assessment | [x] structured codes (`NO_FACE`/`FACE_TOO_SMALL`/`LOW_CONFIDENCE`/`EXCESSIVE_POSE`/`MULTIPLE_FACES`/`INVALID_IMAGE`) via [face-quality.ts](../frontend/src/lib/face-quality.ts) — see §9 |
 | Face tracking in video | [ ] not implemented (per-frame detection only, live camera mode) |
@@ -273,18 +273,30 @@ landmark-geometry comparison.** Two genuinely different features:
 
 ## 11. Liveness Detection
 
-**Heuristic signal added, explicitly not certified.** [liveness.ts](../frontend/src/lib/liveness.ts)'s
-`LivenessHeuristic` tracks frame-to-frame landmark movement across a sliding window (camera
-mode); if average movement stays near-zero across the window, it flags
-`static_input_suspected` — catching the crudest spoofing case (a completely static photo held
-in front of the camera). It does **not** detect photo-of-a-photo, screen replay with motion, or
-a printed photo gently wobbled by hand, and is not wired into any decision gate — it's a
-diagnostic signal only, covered by 5 unit tests.
+**Real trained anti-spoofing model added, additive to the existing heuristic.**
+[liveness.ts](../frontend/src/lib/liveness.ts)'s `LivenessHeuristic` still runs automatically in
+camera mode exactly as before (frame-to-frame landmark movement, `static_input_suspected`,
+diagnostic only, 5 unit tests) — that part is unchanged.
 
-FaceVision still doesn't gate authentication, payments, or KYC on face matching, so this
-remains correctly out of the critical path. If that scope ever changes, this heuristic must be
-replaced with (not upgraded into) a real trained anti-spoofing model before compare results
-could be trusted for anything security-sensitive.
+New: **MiniFASNet V2** ([model card](../docs/model-card-minifasnet.md),
+[ADR 0003](adr/0003-minifasnet-liveness-and-jwt-auth.md)), a real ONNX anti-spoofing
+classifier, wired up as a user-triggered "Check Liveness" button per detected face
+([minifasnet.ts](../frontend/src/lib/minifasnet.ts), [antispoof-crop.ts](../frontend/src/lib/antispoof-crop.ts),
+`checkLiveness()` in [face-pipeline.ts](../frontend/src/lib/face-pipeline.ts)). Verified against
+the actual downloaded model graph (BGR/80×80 input, raw-logit 3-class output, softmax applied
+client-side) rather than assumed from documentation. Covered by 17 unit tests across crop-box
+math and tensor/softmax/classification logic.
+
+- [x] Real (trained) anti-spoofing signal available, not just a heuristic
+- [ ] Not wired into any automatic gate — enroll/recognize don't require a passing liveness
+  check; this is a deliberate scope boundary (see ADR 0003 consequences), not an oversight
+- [ ] Single model variant only (2.7 crop scale), not the original project's multi-scale
+  ensemble — expect lower robustness than the paper's published numbers (see model card
+  limitations)
+
+FaceVision still doesn't gate authentication, payments, or KYC on face matching, so the lack of
+an automatic liveness gate remains a deliberate, documented scope choice, not a gap discovered
+after the fact.
 
 ---
 
@@ -346,13 +358,23 @@ the old unversioned `/api/...` prefix for backward compatibility (see
 - [x] Opt-in `API_KEY` gate via `X-API-Key` header on write/destructive endpoints
   ([core/security.py](../backend/app/core/security.py)) — off by default in dev, must be set
   in production (documented in README)
-- [x] Per-IP sliding-window rate limiting on `/api/detections` and `/api/compare`
-  ([core/rate_limit.py](../backend/app/core/rate_limit.py))
+- [x] Per-route, per-IP sliding-window rate limiting on `/api/detections`, `/api/compare`,
+  `/api/gallery/enroll`, `/api/gallery/recognize`, and `/api/auth/*`
+  ([core/rate_limit.py](../backend/app/core/rate_limit.py)) — each route has its own isolated
+  budget, keyed on `(limiter_id, client_ip)`; a real cross-route budget-sharing bug was found and
+  fixed while adding the new auth/gallery limiters (see [ADR 0003](adr/0003-minifasnet-liveness-and-jwt-auth.md)
+  consequences), with a regression test in `test_security_and_rate_limit.py`
 - [x] CORS restricted to configured origins (was `allow_origins=["*"]` + credentials — fixed)
 - [x] Generic error responses; internal exceptions logged server-side, never returned to clients
-- [ ] No authentication/authorization model beyond the single shared `API_KEY` — fine for this
-  app's actual threat model (anonymous session-scoped metadata, no PII), would need real
-  per-user auth (JWT/OAuth) if user accounts or access-controlled data ever get added
+  — verified end-to-end in `test_security_adversarial.py`
+- [x] **Real authentication now exists**: JWT bearer tokens (PyJWT HS256) + bcrypt-hashed
+  passwords, `POST /api/v1/auth/register`, `POST /api/v1/auth/login`, `GET /api/v1/auth/me`
+  ([core/auth.py](../backend/app/core/auth.py), [routers/auth.py](../backend/app/routers/auth.py)) —
+  see [ADR 0003](adr/0003-minifasnet-liveness-and-jwt-auth.md). The old shared `API_KEY` gate is
+  unchanged and still governs write/destructive endpoints independently of user auth.
+- [~] No frontend login/register UI wired up yet — the backend fully supports auth via direct
+  API calls (register → token → `Authorization: Bearer`), but `face-vision.tsx` has no form for
+  it. Tracked gap, not a silent omission.
 - [ ] Rate limiter is in-memory, per-process — documented limitation; won't hold across
   multiple backend replicas (README "Known Limitations")
 
@@ -362,14 +384,25 @@ the old unversioned `/api/...` prefix for backward compatibility (see
 
 - [x] **No raw images ever leave the browser** — this is the core product promise and it's
   actually true in the code, not just marketing copy
-- [x] Backend stores only bounding boxes, confidence scores, and 5-point landmark coordinates
-  — never pixels
+- [x] Backend stores only bounding boxes, confidence scores, 5-point landmark coordinates, and
+  (new, opt-in) gallery embeddings/account credentials — never pixels
 - [x] `.env`/`.env.example` split correctly; secrets gitignored, never committed
 - [x] Retention policy now enforceable: `RETENTION_DAYS` setting +
   `detection_service.purge_expired_detections()` + `backend/scripts/purge_old_detections.py`
   (opt-in — unset by default so existing deployments aren't affected). Covered by unit tests.
 - [x] The four required questions (what/why/who/how-long/how-deleted) are now answered
-  concretely in [docs/privacy-retention-policy.md](privacy-retention-policy.md).
+  concretely in [docs/privacy-retention-policy.md](privacy-retention-policy.md), updated to
+  cover user accounts (email + bcrypt password hash) alongside the existing categories.
+- [x] **Authenticated data ownership is now cryptographically bound, not client-asserted.**
+  `resolve_scope_id()` ([core/auth.py](../backend/app/core/auth.py)) always derives an
+  authenticated caller's scope from their verified JWT `sub` claim, ignoring any client-supplied
+  `userSessionId` in the same request — closing the specific gap where a logged-in user could
+  plant or read data under a guessed/claimed session id. Covered by 3 dedicated tests in
+  `test_gallery_router.py` proving cross-user isolation.
+- [x] Passwords are bcrypt-hashed with a per-password salt, never stored or logged in plaintext;
+  hash verification fails closed on a malformed hash (`test_auth_core.py`).
+- [x] Login/register failures never distinguish "no such account" from "wrong password" (both
+  401) — avoids an account-enumeration oracle (checklist §24, `test_auth_router.py`).
 
 ---
 
@@ -434,15 +467,16 @@ they're visible in the UI at detection time, not retroactively needed per histor
 
 | Area | Status |
 |---|---|
-| Frontend unit tests | [x] `image.test.ts`, `yunet.test.ts`, `face-math.test.ts` — validation, NMS, and landmark-similarity logic covered |
-| Backend unit tests | [x] 30 tests covering detection/stats/compare services, security gate, rate limiter, DB URL normalization, init-db retry logic, retention purge, full-pipeline HTTP integration |
+| Frontend unit tests | [x] `image.test.ts`, `yunet.test.ts`, `face-math.test.ts`, `sface.test.ts`, `face-alignment.test.ts`, `minifasnet.test.ts`, `antispoof-crop.test.ts`, `face-pipeline.test.ts` — validation, NMS, landmark-similarity, embedding, alignment, and anti-spoofing logic all covered |
+| Backend unit tests | [x] auth (`test_auth_core.py`, `test_auth_service.py`, `test_auth_router.py`), gallery + cross-user isolation (`test_gallery_router.py`), dedicated adversarial suite (`test_security_adversarial.py`), plus the existing detection/stats/compare/security-gate/rate-limiter/DB-normalization/retention-purge/full-pipeline coverage |
 | Representative test dataset (lighting/skin tone/age/angle/occlusion diversity) | [ ] not built — tests use synthetic coordinate fixtures, not a real diverse image set |
 | Measured accuracy (precision/recall/FAR/FRR) | [ ] not measured — no benchmark numbers exist beyond "it works in manual testing" |
-| Security testing (malicious files, oversized payloads, replay/spoofing) | [~] payload size capped, schema-validated; no dedicated adversarial test suite |
+| Security testing (malicious files, oversized payloads, replay/spoofing) | [x] dedicated adversarial suite (`test_security_adversarial.py`, §24): `MAX_FACES_PER_DETECTION` boundary (128 accepted / 129 rejected), SQL-injection-style and script-tag strings stored literally (not executed/reflected), unauthorized access without/with-wrong `API_KEY`, sequential-ID enumeration returns uniform 404s, no exception details leak in error responses — plus JWT tampering/expiry/wrong-secret rejection and login-enumeration-safety covered in the auth test files |
 | Load testing | [x] k6 script exists and is documented; not yet run against the live Railway deployment to get real numbers |
 
-**Honest summary:** functional correctness is well-tested; measured accuracy and adversarial/
-load numbers are not — don't claim specific accuracy percentages until they're measured.
+**Honest summary:** functional correctness is well-tested, and adversarial/security-boundary
+behavior now has dedicated coverage (§24); measured accuracy and real-world load numbers are
+still not measured — don't claim specific accuracy percentages until they're measured.
 
 ---
 
@@ -486,9 +520,13 @@ face_gallery (id, name, user_session_id, created_at, updated_at)              --
   [database/migrations/003_gallery_embeddings.sql](../database/migrations/003_gallery_embeddings.sql),
   which adds the `embedding`/`model_version` columns the original (never-built) design for
   these tables didn't anticipate.
-- [ ] `users` and `app_settings` (from `001_init_schema.sql`) remain unused — no user-account
-  system exists yet (gallery entries are scoped by anonymous `user_session_id`, same as
-  detections), so `users` stays reserved for a future real-auth feature (Phase 3, §15-16).
+- [x] **`users` is now active** (extended via `database/migrations/004_users_password_hash.sql`
+  with a `password_hash` column) — real JWT + bcrypt auth, see §15/§16 and
+  [ADR 0003](adr/0003-minifasnet-liveness-and-jwt-auth.md). Gallery entries and detections can
+  still be scoped by anonymous `user_session_id` (unchanged, opt-in), or by a real authenticated
+  user id when a valid bearer token is presented.
+- [ ] `app_settings` (from `001_init_schema.sql`) remains unused — no current feature reads or
+  writes it.
 
 ---
 
@@ -685,13 +723,15 @@ the whole git history.*
     default, so the honest default answer is "kept until manually cleared" unless an operator
     configures it.
 18. **Embeddings stored?** No — landmark coordinates only, and only if the backend is used.
-19. **Who can access them?** Anyone with the `API_KEY` (if set) can write; read endpoints are
-    currently open (no per-session read restriction beyond the `userSessionId` query filter,
-    which is client-supplied and not cryptographically bound to a session).
+19. **Who can access them?** Anyone with the `API_KEY` (if set) can write; anonymous
+    (unauthenticated) reads are still open beyond the client-supplied `userSessionId` filter. For
+    an authenticated caller, access is now cryptographically bound — `resolve_scope_id()`
+    derives their scope from a verified JWT, not a client-claimed session id (§15/§16).
 20. **Biometric values in logs?** No — verified across every logging call in the codebase.
-21. **Spoofing handled?** Only a crude heuristic (static-image detection via landmark
-    movement, §11) — not real anti-spoofing. Still by design given current scope; not relied
-    upon for any security decision.
+21. **Spoofing handled?** Two layers now: the original heuristic (static-image detection via
+    landmark movement) plus a real trained anti-spoofing model, MiniFASNet V2, available as a
+    user-triggered check (§11). Neither is wired into an automatic enroll/recognize gate — by
+    design given current scope; not relied upon for any security decision.
 22. **Detection or identity verification?** Detection, plus a geometric similarity score — not
     identity verification against an enrolled database.
 23. **How was the threshold selected?** Manually tuned during development, not through a formal
@@ -711,13 +751,15 @@ the whole git history.*
 
 **Bottom line:** this is a solid, honestly-scoped hobby/portfolio-grade implementation with
 real engineering discipline (layering, tests, CI with CVE scanning, no raw biometric storage,
-rate limiting, API keys, model versioning, an enforceable retention policy, and a heuristic
-liveness signal that's honestly labeled as non-certified). It is *still not* production-ready
-for any KYC/auth/payments use case — the two items that would require fundamentally new
-capability (a real trained face-embedding model, and certified anti-spoofing) are tracked in
-[ADR 0001](adr/0001-landmark-similarity-vs-embeddings.md) as deliberate, revisitable decisions,
-not oversights. Formal model benchmarking (§4), measured accuracy (§22–25), and bias/fairness
-testing (§33) remain open — these require data and evaluation work, not just more code.
+rate limiting, API keys, model versioning, an enforceable retention policy, a real trained
+anti-spoofing model alongside the original honestly-labeled heuristic, and now JWT + bcrypt
+user accounts with cryptographically-bound data scoping). It is *still not* production-ready
+for any KYC/auth/payments use case — MiniFASNet is a single non-ensembled variant with no
+independent FAR/FRR or presentation-attack-detection benchmark run by this app (tracked in
+[ADR 0003](adr/0003-minifasnet-liveness-and-jwt-auth.md) as a deliberate, revisitable scope
+choice, not an oversight), and it isn't wired into any enroll/recognize gate. Formal model
+benchmarking (§4), measured accuracy (§22–25), and bias/fairness testing (§33) remain open —
+these require data and evaluation work, not just more code.
 
 ---
 
