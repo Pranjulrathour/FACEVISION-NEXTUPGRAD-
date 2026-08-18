@@ -1,6 +1,8 @@
+import type { FaceDetector } from "./face-detector";
 import type { Face, FaceLandmarks } from "./face-types";
 
 export const YUNET_MODEL_URL = "/models/face_detection_yunet_2023mar.onnx";
+export const YUNET_MODEL_VERSION = "yunet-2023mar";
 const INPUT_SIZE = 640;
 const BOX_PADDING_TOP = 0.35;
 const BOX_PADDING_BOTTOM = 0.25;
@@ -10,11 +12,13 @@ const BOX_PADDING_RIGHT = 0.22;
 type Ort = typeof import("onnxruntime-web");
 type Session = import("onnxruntime-web").InferenceSession;
 
-export class YuNetDetector {
+export class YuNetDetector implements FaceDetector {
   private session: Session | null = null;
   private ort: Ort | null = null;
   private activeProvider: "webgpu" | "wasm" | null = null;
   private providerDegraded = false;
+
+  readonly modelVersion = YUNET_MODEL_VERSION;
 
   async initialize(): Promise<"webgpu" | "wasm"> {
     this.ort = await import("onnxruntime-web");
