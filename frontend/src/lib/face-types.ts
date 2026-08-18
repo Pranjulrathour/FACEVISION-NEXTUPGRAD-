@@ -25,6 +25,9 @@ export type DetectionRecord = {
   faces: Face[];
   imageName?: string;
   imageDataUrl?: string;
+  /** Which detector/model produced this record (e.g. "yunet-2023mar"), for
+   * traceability if the bundled model is ever swapped. */
+  modelVersion?: string;
 };
 
 export type FaceMatchResult = {

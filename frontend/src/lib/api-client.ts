@@ -61,6 +61,7 @@ export const api = {
       })),
       imageName: record.imageName,
       userSessionId: getSessionId(),
+      modelVersion: record.modelVersion,
     };
     return request<any>("/detections", {
       method: "POST",
