@@ -30,11 +30,20 @@ COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY healthcheck.js ./healthcheck.js
 
-EXPOSE 3000
+# Bind port must match EXPOSE below, and both must match the target port
+# Railway routes public traffic to. Railway injects PORT=8080 by default and
+# derives the domain's target port from EXPOSE — if these disagree, the edge
+# proxies to a port nothing is listening on and every request returns a
+# 502 "Application failed to respond" even though the container is healthy
+# (internal healthchecks read PORT and still pass, which hides the mismatch).
+# A platform-supplied PORT still overrides this default.
+ENV PORT=8080
+
+EXPOSE 8080
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
     CMD node healthcheck.js
 
-# Next's standalone server reads $PORT itself (defaults to 3000), so Railway's
-# injected PORT is picked up automatically — no hardcoded ENV PORT here.
+# Next's standalone server reads $PORT itself, so the ENV default above (or a
+# platform override) decides the listen port.
 CMD ["node", "server.js"]

@@ -17,7 +17,16 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-EXPOSE 8000
+# Bind port must match EXPOSE below, and both must match the target port
+# Railway routes public traffic to. Railway injects PORT=8080 by default and
+# derives the domain's target port from EXPOSE — if these disagree, the edge
+# proxies to a port nothing is listening on and every request returns a
+# 502 "Application failed to respond" even though the container is healthy
+# (internal healthchecks read PORT and still pass, which hides the mismatch).
+# A platform-supplied PORT still overrides this default.
+ENV PORT=8080
+
+EXPOSE 8080
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
     CMD python healthcheck.py || exit 1
