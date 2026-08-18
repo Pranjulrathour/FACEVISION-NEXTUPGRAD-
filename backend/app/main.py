@@ -37,6 +37,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+API_V1_PREFIX = "/api/v1"
+LEGACY_API_PREFIX = "/api"
+
+
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     start = time.monotonic()
@@ -52,11 +56,30 @@ async def log_requests(request: Request, call_next):
     return response
 
 
-app.include_router(health.router, prefix="/api", tags=["health"])
-app.include_router(detection.router, prefix="/api/detections", tags=["detections"])
-app.include_router(history.router, prefix="/api/history", tags=["history"])
-app.include_router(stats.router, prefix="/api/stats", tags=["stats"])
-app.include_router(face_compare.router, prefix="/api/compare", tags=["compare"])
+@app.middleware("http")
+async def deprecate_unversioned_routes(request: Request, call_next):
+    """Mark the pre-v1 unversioned paths (/api/...) as deprecated (§14)
+    without breaking them — anything already integrated against the old
+    paths keeps working, but gets a standard Deprecation header (RFC 8594)
+    pointing at the v1 replacement, plus a one-line server log so usage of
+    the legacy paths is visible without needing client-side telemetry."""
+    path = request.url.path
+    is_legacy = path.startswith(LEGACY_API_PREFIX) and not path.startswith(API_V1_PREFIX)
+    response = await call_next(request)
+    if is_legacy:
+        v1_path = API_V1_PREFIX + path[len(LEGACY_API_PREFIX):]
+        response.headers["Deprecation"] = "true"
+        response.headers["Link"] = f'<{v1_path}>; rel="successor-version"'
+        logger.warning("Deprecated unversioned route called: %s %s (use %s)", request.method, path, v1_path)
+    return response
+
+
+for prefix in (API_V1_PREFIX, LEGACY_API_PREFIX):
+    app.include_router(health.router, prefix=prefix, tags=["health"])
+    app.include_router(detection.router, prefix=f"{prefix}/detections", tags=["detections"])
+    app.include_router(history.router, prefix=f"{prefix}/history", tags=["history"])
+    app.include_router(stats.router, prefix=f"{prefix}/stats", tags=["stats"])
+    app.include_router(face_compare.router, prefix=f"{prefix}/compare", tags=["compare"])
 
 
 @app.exception_handler(Exception)

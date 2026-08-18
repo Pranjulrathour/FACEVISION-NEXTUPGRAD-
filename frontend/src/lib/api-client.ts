@@ -10,6 +10,13 @@ const API_BASE =
   (typeof process !== "undefined" && (process as any).env?.NEXT_PUBLIC_API_URL) ||
   "http://localhost:8000/api";
 
+// Backend routes are versioned under /api/v1 (§14) — the unversioned
+// /api/... paths still work but are deprecated (see main.py's
+// deprecate_unversioned_routes middleware). NEXT_PUBLIC_API_URL keeps
+// pointing at the bare .../api origin per existing deployment docs; the
+// /v1 segment is added here so changing that env var format isn't required.
+const API_VERSION_SEGMENT = "/v1";
+
 let SESSION_ID: string | null = null;
 function getSessionId(): string {
   if (typeof window === "undefined") return "server";
@@ -26,7 +33,7 @@ function getSessionId(): string {
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T | null> {
-  const url = `${API_BASE}${path}`;
+  const url = `${API_BASE}${API_VERSION_SEGMENT}${path}`;
   try {
     const res = await fetch(url, {
       headers: { "Content-Type": "application/json" },
