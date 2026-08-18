@@ -9,11 +9,18 @@ import type {
   FaceMatchResult,
   StatsSummary,
   AppSettings,
+  GalleryEntry,
 } from "@/lib/face-types";
 import { loadImage, validateImage, validateImageSignature } from "@/lib/image";
 import { YuNetDetector } from "@/lib/yunet";
+import { SFaceEmbedder } from "@/lib/sface";
 import { deepEqualFace } from "@/lib/face-math";
-import { runDetectionPipeline, matchFaces, FacePipelineError } from "@/lib/face-pipeline";
+import {
+  runDetectionPipeline,
+  matchFaces,
+  embedFace,
+  FacePipelineError,
+} from "@/lib/face-pipeline";
 import { LivenessHeuristic } from "@/lib/liveness";
 import {
   saveDetection as saveLocal,
@@ -42,6 +49,8 @@ function uid(): string {
 
 export function FaceVision() {
   const detector = useRef<YuNetDetector | null>(null);
+  const embedder = useRef<SFaceEmbedder | null>(null);
+  const lastSource = useRef<HTMLImageElement | HTMLVideoElement | null>(null);
   const cameraLiveness = useRef<LivenessHeuristic>(new LivenessHeuristic());
   const stream = useRef<MediaStream | null>(null);
   const video = useRef<HTMLVideoElement | null>(null);
@@ -68,6 +77,10 @@ export function FaceVision() {
   const [comparing, setComparing] = useState(false);
   const [selectedFaceIdx, setSelectedFaceIdx] = useState<number | null>(null);
   const [apiAvailable, setApiAvailable] = useState(false);
+  const [embedderStatus, setEmbedderStatus] = useState<RuntimeState>("idle");
+  const [galleryEntries, setGalleryEntries] = useState<GalleryEntry[]>([]);
+  const [galleryBusy, setGalleryBusy] = useState(false);
+  const [recognizedNames, setRecognizedNames] = useState<Record<number, string>>({});
 
   useEffect(() => {
     void api.health().then((r) => setApiAvailable(!!r && r.status === "ok"));
@@ -218,6 +231,97 @@ export function FaceVision() {
     }
   }, []);
 
+  const prepareEmbedder = useCallback(async () => {
+    if (embedder.current) return true;
+    setEmbedderStatus("loading");
+    setStatus("Loading the face-recognition model (SFace, ~37MB, cached after first load)…");
+    try {
+      const instance = new SFaceEmbedder();
+      await instance.initialize();
+      embedder.current = instance;
+      setEmbedderStatus("ready");
+      return true;
+    } catch (err) {
+      console.error("[FaceVision] Failed to load embedding model:", err);
+      setEmbedderStatus("error");
+      setStatus("Face-recognition model is unavailable. Add the SFace model file and refresh.");
+      return false;
+    }
+  }, []);
+
+  const refreshGallery = useCallback(async () => {
+    const result = await api.listGallery();
+    if (result) setGalleryEntries(result.items);
+  }, []);
+
+  const enrollFace = useCallback(
+    async (face: Face) => {
+      if (!lastSource.current) {
+        setStatus("Run a detection first, then enroll a face.");
+        return;
+      }
+      const name = window.prompt("Enroll this face as (name):");
+      if (!name || !name.trim()) return;
+      if (!(await prepareEmbedder())) return;
+      setGalleryBusy(true);
+      try {
+        const vector = await embedFace(embedder.current!, lastSource.current, face.landmarks);
+        const entry = await api.enrollFace(name.trim(), vector, embedder.current!.modelVersion);
+        if (entry) {
+          setStatus(`Enrolled "${name.trim()}" (${entry.sampleCount} sample${entry.sampleCount === 1 ? "" : "s"}).`);
+          await refreshGallery();
+        } else {
+          setStatus("Enrollment failed — backend unavailable or rejected the request.");
+        }
+      } catch (err) {
+        console.error("[FaceVision] Enrollment failed:", err);
+        const detail = err instanceof Error ? err.message : String(err);
+        setStatus(`Enrollment failed — ${detail}.`);
+      } finally {
+        setGalleryBusy(false);
+      }
+    },
+    [prepareEmbedder, refreshGallery]
+  );
+
+  const recognizeFace = useCallback(
+    async (face: Face, faceIdx: number) => {
+      if (!lastSource.current) return;
+      if (!(await prepareEmbedder())) return;
+      setGalleryBusy(true);
+      try {
+        const vector = await embedFace(embedder.current!, lastSource.current, face.landmarks);
+        const result = await api.recognizeFace(vector);
+        if (result?.matched && result.name) {
+          setRecognizedNames((prev) => ({ ...prev, [faceIdx]: result.name! }));
+          setStatus(`Recognized as "${result.name}" (${Math.round(result.similarity * 100)}% similarity).`);
+        } else {
+          setStatus("No match found in the gallery for this face.");
+        }
+      } catch (err) {
+        console.error("[FaceVision] Recognition failed:", err);
+        const detail = err instanceof Error ? err.message : String(err);
+        setStatus(`Recognition failed — ${detail}.`);
+      } finally {
+        setGalleryBusy(false);
+      }
+    },
+    [prepareEmbedder]
+  );
+
+  const deleteGalleryEntry = useCallback(
+    async (entryId: number) => {
+      setGalleryBusy(true);
+      try {
+        await api.deleteGalleryEntry(entryId);
+        await refreshGallery();
+      } finally {
+        setGalleryBusy(false);
+      }
+    },
+    [refreshGallery]
+  );
+
   const slotIndices = useMemo<[number | null, number | null]>(() => {
     const aIdx = compareSlots[0] ? faces.findIndex((f) => deepEqualFace(f, compareSlots[0]!)) : -1;
     const bIdx = compareSlots[1] ? faces.findIndex((f) => deepEqualFace(f, compareSlots[1]!)) : -1;
@@ -227,6 +331,7 @@ export function FaceVision() {
   const detectImage = useCallback(
     async (url: string, confidence: number, nms: number) => {
       const image = await loadImage(url);
+      lastSource.current = image;
       if (!(await prepareDetector())) return;
       setProcessing(true);
       setStatus("Scanning locally — your image never leaves this device.");
@@ -255,6 +360,7 @@ export function FaceVision() {
           slotIndices
         );
         setFaces(found);
+        setRecognizedNames({});
         persistCurrent(found);
         if (!found.length) {
           setStatus(`No faces detected (${quality.detail})`);
@@ -333,6 +439,7 @@ export function FaceVision() {
           const element = video.current;
           if (element && element.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && !busy) {
             busy = true;
+            lastSource.current = element;
             try {
               const { faces: found, liveness } = await runDetectionPipeline(
                 detector.current!,
@@ -547,6 +654,7 @@ export function FaceVision() {
             ["history", "History"],
             ["stats", "Stats"],
             ["compare", "Compare"],
+            ["gallery", "Gallery"],
             ["settings", "Settings"],
           ] as [PanelTab, string][]
         ).map(([k, label]) => (
@@ -556,6 +664,7 @@ export function FaceVision() {
             onClick={() => {
               setPanel(k);
               if (k === "stats") void refreshRemoteStats();
+              if (k === "gallery") void refreshGallery();
               if (k === "history") {
                 setHistory(getLocalHistory());
                 if (apiAvailable) void api.listHistory(50, 0).then((r) => {
@@ -674,6 +783,9 @@ export function FaceVision() {
                     </div>
                     <div className="face-card-meta">
                       <small>Box: {Math.round(face.box.width)} × {Math.round(face.box.height)}</small>
+                      {recognizedNames[i] && (
+                        <small className="recognized-label">Recognized: {recognizedNames[i]}</small>
+                      )}
                     </div>
                     <div className="face-card-actions">
                       <button
@@ -693,6 +805,26 @@ export function FaceVision() {
                         }}
                       >
                         {inB ? "✓ Slot B" : "+ Compare B"}
+                      </button>
+                      <button
+                        className="chip chip-enroll"
+                        disabled={galleryBusy}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void enrollFace(face);
+                        }}
+                      >
+                        Enroll
+                      </button>
+                      <button
+                        className="chip chip-recognize"
+                        disabled={galleryBusy}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void recognizeFace(face, i);
+                        }}
+                      >
+                        Recognize
                       </button>
                     </div>
                   </div>
@@ -875,6 +1007,60 @@ export function FaceVision() {
               <small className="muted">
                 Result is derived from landmark geometry (cosine similarity on normalized keypoints).
               </small>
+            </div>
+          )}
+        </section>
+      )}
+
+      {panel === "gallery" && (
+        <section className="workspace panel-content">
+          <div className="panel-header">
+            <h3>Identity gallery</h3>
+            <button className="ghost-btn" onClick={() => void refreshGallery()}>↻ Refresh</button>
+          </div>
+          <p className="lede">
+            Enroll and recognize faces using SFace — a real trained embedding model, distinct
+            from the landmark-geometry similarity used in Compare. Only the embedding vector
+            (128 numbers) is ever sent to the backend — never an image.{" "}
+            <small className="muted">
+              Model: {embedderStatus === "ready" ? "loaded" : embedderStatus === "loading" ? "loading…" : "not loaded yet"}
+            </small>
+          </p>
+          {!apiAvailable && (
+            <div className="empty-state">
+              <p>Backend unavailable — the gallery requires the optional FastAPI backend to be running.</p>
+            </div>
+          )}
+          <div className="empty-state">
+            <p>Go to Workspace → detect a face → click &quot;Enroll&quot; on a face card to name it.</p>
+            <small>Click &quot;Recognize&quot; on any detected face to check it against enrolled identities.</small>
+          </div>
+          {galleryEntries.length === 0 ? (
+            <div className="empty-state">
+              <p>No enrolled identities yet.</p>
+            </div>
+          ) : (
+            <div className="history-list">
+              {galleryEntries.map((entry) => (
+                <div key={entry.id} className="history-item gallery-entry">
+                  <div className="history-body">
+                    <div className="history-title">
+                      <strong>{entry.name}</strong>
+                      <span className="history-mode upload">
+                        {entry.sampleCount} sample{entry.sampleCount === 1 ? "" : "s"}
+                      </span>
+                    </div>
+                    <small className="muted">Enrolled {new Date(entry.createdAt).toLocaleString()}</small>
+                  </div>
+                  <button
+                    className="danger-btn"
+                    disabled={galleryBusy}
+                    onClick={() => void deleteGalleryEntry(entry.id)}
+                  >
+                    Delete
+                  </button>
+                </div>
+              ))}
             </div>
           )}
         </section>
