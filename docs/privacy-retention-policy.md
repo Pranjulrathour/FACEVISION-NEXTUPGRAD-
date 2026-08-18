@@ -18,27 +18,43 @@ backend is configured and reachable (`NEXT_PUBLIC_API_URL` is set and the app ca
 - A per-browser, randomly generated session identifier (`user_session_id`) — not a real user
   account, no email/name/PII
 
-**Raw image pixels are never sent to, or stored by, the backend.** Detection runs entirely in
-the browser; only the metadata above is optionally persisted.
+**If a user explicitly enrolls a face in the Gallery** (checklist §2, §28 — see
+[ADR 0002](adr/0002-sface-embeddings-for-gallery-recognition.md)):
+- A 128-dimension SFace embedding vector (`gallery_face_samples.embedding`) — this is real
+  derived biometric data, not geometric metadata like the landmarks above. Storing it is what
+  makes recognition against that identity possible later.
+- The name the user typed for that identity (`face_gallery.name`) — chosen freely by the user,
+  not verified against any real-world identity document.
+- This only happens on an explicit "Enroll" action; it is never automatic.
+
+**Raw image pixels are never sent to, or stored by, the backend, in either case.** Detection and
+embedding computation both run entirely in the browser; only the metadata/vectors above are
+optionally persisted, and only when the user takes an explicit action.
 
 ## Why is it stored?
 
-Solely to power the app's own History and Stats panels — letting a user revisit past
-detections and see aggregate trends within their own browser session. There is no analytics,
-advertising, or third-party sharing use case.
+Detection metadata: to power the app's own History and Stats panels — letting a user revisit
+past detections and see aggregate trends within their own browser session. Gallery embeddings:
+solely to let a user recognize a previously-enrolled identity in later detections — the entire
+point of the feature they explicitly opted into. There is no analytics, advertising, or
+third-party sharing use case for either.
 
 ## Who can access it?
 
 - **The backend operator** (whoever runs the FastAPI service) can query the database directly
   — there's no per-record encryption beyond normal database access controls (see
   [README.md Production Checklist](../README.md#production-checklist) for hardening steps).
-- **API callers**: read endpoints (`GET /api/detections`, `GET /api/history`, `GET /api/stats`)
-  are currently unauthenticated by default — anyone who can reach the backend URL can read
-  data for a given `userSessionId` if they know or guess it. Session IDs are randomly generated
-  (not sequential/enumerable in practice) but this is **not** access-controlled the way a real
-  user-account system would be. Write/destructive endpoints (`POST /api/detections`,
-  `DELETE /api/detections/{id}`, `DELETE /api/history`) can be gated behind `API_KEY` (see
-  [README.md § Security & rate limiting](../README.md#security--rate-limiting)).
+- **API callers**: read endpoints (`GET /api/detections`, `GET /api/history`, `GET /api/stats`,
+  `GET /api/gallery`) are currently unauthenticated by default — anyone who can reach the
+  backend URL can read data for a given `userSessionId` if they know or guess it. Session IDs
+  are randomly generated (not sequential/enumerable in practice) but this is **not**
+  access-controlled the way a real user-account system would be. Write/destructive endpoints
+  (`POST /api/detections`, `DELETE /api/detections/{id}`, `DELETE /api/history`,
+  `POST /api/gallery/enroll`, `DELETE /api/gallery/{id}`) can be gated behind `API_KEY` (see
+  [README.md § Security & rate limiting](../README.md#security--rate-limiting)). Note:
+  `POST /api/gallery/recognize` is intentionally **not** gated behind `API_KEY` (a visitor
+  needs to be able to check a face against the gallery to use the feature at all) — it is
+  rate-limited instead.
 
 ## How long is it stored?
 
@@ -50,6 +66,12 @@ an operator runs the retention-purge script. As of this update, retention is enf
 - `backend/scripts/purge_old_detections.py` — deletes `detection_records` (and their cascaded
   `face_records`) older than `RETENTION_DAYS`, when set
 - Run manually, or schedule it (cron, Railway scheduled job, etc.) for automatic enforcement
+- **Gallery entries are not covered by `RETENTION_DAYS`** — an enrolled identity persists
+  indefinitely until the user (or an operator) explicitly deletes it via
+  `DELETE /api/gallery/{id}`. This is a deliberate difference from detection history: an
+  enrolled identity is meant to be durable (that's the point of enrolling it), not something
+  that silently expires. If you want gallery entries to also expire automatically, that's a
+  gap to fill, not something the current purge script does.
 
 ## How is it deleted?
 

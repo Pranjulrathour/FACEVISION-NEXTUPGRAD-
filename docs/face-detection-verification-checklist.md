@@ -16,7 +16,7 @@ as the system evolves, don't let it go stale.
 | Phase | Sections | Status |
 |---|---|---|
 | **1 — Foundation** | §6 §7 §9 §12 §14 §20 | ✅ Done — magic-byte validation, pixel-level blur/lighting checks, inference timeout, `/api/v1` versioning, centralized config |
-| 2 — Recognition | §2 §5 §10 §28 | ⏳ Not started — SFace embeddings, enroll+recognize gallery, `BiometricProfiles` table |
+| **2 — Recognition** | §2 §5 §10 §28 | ✅ Done — real SFace embeddings + face alignment, enroll/recognize gallery, `BiometricProfiles`-style tables activated |
 | 3 — Security | §11 §15 §16 §24 | ⏳ Not started — MiniFASNet anti-spoofing, JWT auth, security test suite |
 | 4 — Measurement | §4 §13 §22 §23 §25 §33 §36 | ⏳ Not started — evaluation harness (needs a dataset you supply), load + memory profiling |
 | 5 — Ops/Governance | §18 §26 §27 §37 §38 §40–43 | ⏳ Not started — `/metrics` + percentiles, Redis-backed rate limiter, caching, PR/governance workflow |
@@ -42,14 +42,14 @@ files/services — not a single tightly-coupled script. Good starting position.
 | Capability | Status |
 |---|---|
 | Face Detection | [x] YuNet ONNX, client-side, [yunet.ts](../frontend/src/lib/yunet.ts) |
-| Face Recognition (deep embeddings) | [ ] not implemented |
-| Face Verification | [~] landmark-geometry cosine similarity only, **not** a learned embedding model — see §10 |
+| Face Recognition (deep embeddings) | [x] SFace ONNX, 128-d embeddings, client-side — [sface.ts](../frontend/src/lib/sface.ts), see §10 |
+| Face Verification | [x] real embedding-based (gallery recognize) **and** [~] landmark-geometry (Compare panel) — two distinct, intentionally separate paths, see §10 |
 | Face Liveness Detection | [~] heuristic passive-liveness signal only (frame-to-frame landmark movement), **not** certified anti-spoofing — see §11 |
 | Multiple-face detection | [x] supported, NMS-filtered |
 | Face quality assessment | [x] structured codes (`NO_FACE`/`FACE_TOO_SMALL`/`LOW_CONFIDENCE`/`EXCESSIVE_POSE`/`MULTIPLE_FACES`/`INVALID_IMAGE`) via [face-quality.ts](../frontend/src/lib/face-quality.ts) — see §9 |
 | Face tracking in video | [ ] not implemented (per-frame detection only, live camera mode) |
-| Face embedding generation | [ ] not implemented (uses 5-point landmark geometry instead) |
-| Identity matching | [~] similarity score only, no enrolled-identity gallery wired up (schema has unused `face_gallery`/`gallery_face_samples` tables) |
+| Face embedding generation | [x] SFace, 128-d, with proper face alignment ([face-alignment.ts](../frontend/src/lib/face-alignment.ts)) — see §10 |
+| Identity matching | [x] enroll + recognize gallery, cosine similarity against enrolled embeddings — [gallery_service.py](../backend/app/services/gallery_service.py), see §28 |
 
 **Input/constraints actually documented** (README "Technical Constraints" table):
 - Input: image upload (JPG/PNG/WebP) or live camera feed, browser-only
@@ -149,15 +149,21 @@ persistence and can be swapped or removed without touching the pipeline.
 
 ## 5. AI Model Abstraction
 
-**Done.** [face-detector.ts](../frontend/src/lib/face-detector.ts) defines a `FaceDetector`
-interface (`initialize()`, `detect()`, `provider`, `modelVersion`); `YuNetDetector implements
-FaceDetector`. `face-vision.tsx` still holds a concrete `useRef<YuNetDetector>`, but a future
-detector only needs to satisfy the interface, not be hand-integrated into the component.
+**Done, now for two model types.** [face-detector.ts](../frontend/src/lib/face-detector.ts)
+defines a `FaceDetector` interface (`initialize()`, `detect()`, `provider`, `modelVersion`);
+`YuNetDetector implements FaceDetector`. [face-embedder.ts](../frontend/src/lib/face-embedder.ts)
+mirrors the same pattern for embedding models (`initialize()`, `embed()`, `provider`,
+`modelVersion`, `embeddingDimension`); `SFaceEmbedder implements FaceEmbedder`. `face-vision.tsx`
+still holds concrete `useRef<YuNetDetector>`/`useRef<SFaceEmbedder>`, but a future
+detector/embedder only needs to satisfy its interface, not be hand-integrated into the component.
 
-Backend `face_compare_service.compare_faces` remains a plain function — still fine for one
-algorithm. If a real embedding-based verifier is added later (see
-[ADR 0001](adr/0001-landmark-similarity-vs-embeddings.md)), wrap both behind a shared
-`FaceVerifier` protocol (Python `typing.Protocol`) at that point, not preemptively.
+Backend `face_compare_service.compare_faces` remains a plain function using shared
+`embedding_math.cosine_similarity()` — still fine for one algorithm.
+`gallery_service.recognize_face` uses the same shared cosine-similarity helper for real
+embeddings, so the underlying math isn't duplicated even though the two features (landmark
+Compare vs. embedding Gallery) stay intentionally separate — see
+[ADR 0001](adr/0001-landmark-similarity-vs-embeddings.md) and
+[ADR 0002](adr/0002-sface-embeddings-for-gallery-recognition.md).
 
 ---
 
@@ -239,23 +245,29 @@ exports `assessFaceQuality()`/`assessFaces()` returning structured codes: `OK`, 
 
 ---
 
-## 10. Face Recognition / Embeddings — important distinction
+## 10. Face Recognition / Embeddings — now implemented, two distinct paths
 
-**FaceVision does not do embedding-based face recognition.** [face-math.ts](../frontend/src/lib/face-math.ts)'s
-`compareFaces()` computes cosine similarity over **normalized 5-point landmark positions**,
-mirrored server-side in [face_compare_service.py](../backend/app/services/face_compare_service.py).
+**Done — real embedding-based recognition exists now, alongside (not replacing) the original
+landmark-geometry comparison.** Two genuinely different features:
 
-This is a legitimate lightweight "are these two detections geometrically similar" check, but
-it is **not** the same as a learned face-embedding model (e.g., ArcFace/FaceNet-style), and
-should never be marketed or relied upon as identity verification. The README's own roadmap
-note (pgvector `embedding_vector` column, reserved but unused) already acknowledges this gap
-correctly — worth keeping that framing honest in any product copy.
+1. **Compare panel** (unchanged, ADR 0001): [face-math.ts](../frontend/src/lib/face-math.ts)'s
+   `compareFaces()` computes cosine similarity over normalized 5-point landmark positions —
+   a lightweight "are these two detections geometrically similar" check, not identity
+   verification. Threshold 0.78, configurable.
+2. **Gallery enroll/recognize** (new, [ADR 0002](adr/0002-sface-embeddings-for-gallery-recognition.md)):
+   real SFace embeddings via [sface.ts](../frontend/src/lib/sface.ts) — 128-dimension vectors
+   from a trained face-recognition model, matched via
+   [matchFaceEmbeddings()](../frontend/src/lib/face-pipeline.ts) using SFace's own calibrated
+   cosine threshold (0.363). This is genuine identity verification, not a geometric proxy.
 
-- [x] Threshold (0.78) is configurable, not hard-coded
-- [ ] No FAR/FRR benchmarking has been done on this similarity metric — because it's landmark
-  geometry, not a trained embedding space, standard face-recognition benchmarking methodology
-  doesn't directly apply; if this ever needs to be a real verification feature, that means
-  adopting an actual embedding model, not tuning the current threshold further
+- [x] Real trained embedding model in use (SFace, ArcFace-family architecture)
+- [x] Face alignment implemented before embedding (required — see §7, §12)
+- [x] Threshold is SFace's own calibrated value (0.363), not tuned by this app, and configurable
+- [ ] No FAR/FRR benchmarking independently run against a real dataset by this app (checklist
+  §22-23, Phase 4) — relying on OpenCV Zoo's published accuracy figures for now
+- [x] The distinction between the two comparison paths is now documented in-product (the
+  Compare panel's result still says "derived from landmark geometry"; the Gallery panel
+  explicitly states it uses "a real trained embedding model, distinct from... Compare")
 
 ---
 
@@ -455,18 +467,28 @@ load numbers are not — don't claim specific accuracy percentages until they're
 ## 28. Database Design
 
 Actual schema ([backend/app/models/detection.py](../backend/app/models/detection.py),
-[database/migrations/001_init_schema.sql](../database/migrations/001_init_schema.sql)):
+[backend/app/models/gallery.py](../backend/app/models/gallery.py)):
 
 ```
 detection_records (id, mode, face_count, avg_confidence, user_session_id, created_at)
   └── face_records (detection_id FK, box_*, confidence, landmarks JSONB)
+
+face_gallery (id, name, user_session_id, created_at, updated_at)              -- BiometricProfiles
+  └── gallery_face_samples (gallery_id FK, embedding JSONB[128], model_version, created_at)
 ```
 
-- [x] Two focused, purpose-specific tables — not a catch-all "biometric blob in the users table"
-- [ ] The SQL migration also defines `users`, `face_gallery`, `gallery_face_samples`,
-  `app_settings` — none of these are used by any current model/router. Reserved for a future
-  identity-gallery feature, but currently dead weight; documented as a known limitation rather
-  than silently ignored
+- [x] Two focused, purpose-specific tables for detections — not a catch-all "biometric blob in
+  the users table"
+- [x] **`face_gallery`/`gallery_face_samples` are now active**, not dead weight — this is the
+  checklist's own recommended `BiometricProfiles`-style separation: biometric embedding data
+  lives in its own table, keyed off a separate identity-entry table, not mixed into
+  `detection_records`. Activated via
+  [database/migrations/003_gallery_embeddings.sql](../database/migrations/003_gallery_embeddings.sql),
+  which adds the `embedding`/`model_version` columns the original (never-built) design for
+  these tables didn't anticipate.
+- [ ] `users` and `app_settings` (from `001_init_schema.sql`) remain unused — no user-account
+  system exists yet (gallery entries are scoped by anonymous `user_session_id`, same as
+  detections), so `users` stays reserved for a future real-auth feature (Phase 3, §15-16).
 
 ---
 

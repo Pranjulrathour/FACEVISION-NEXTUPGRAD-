@@ -46,13 +46,14 @@ You can disable history persistence entirely from the **Settings** panel.
 
 ## Live UI Features
 
-The frontend ships with 5 integrated panels:
+The frontend ships with 6 integrated panels:
 
-1. **Workspace** — Upload or live camera. Face cards with confidence badges. Export annotated PNG. Compare A/B slot chips.
+1. **Workspace** — Upload or live camera. Face cards with confidence badges. Export annotated PNG. Compare A/B slot chips, Enroll/Recognize actions.
 2. **History** — Thumbnail timeline of the last 100 detections; click to reload any previous result.
 3. **Stats** — 4 KPI cards + 7-day bar chart of faces detected per day.
-4. **Compare** — Landmark-cosine similarity. Two slots, adjustable threshold, animated match meter.
-5. **Settings** — Toggle history, labels, landmarks, custom frame/landmark colors, compare threshold.
+4. **Compare** — Landmark-cosine similarity between two selected faces. Two slots, adjustable threshold, animated match meter.
+5. **Gallery** — Enroll a detected face under a name (real SFace embedding, not an image), then recognize it in future detections. See [ADR 0002](docs/adr/0002-sface-embeddings-for-gallery-recognition.md) for how this differs from Compare.
+6. **Settings** — Toggle history, labels, landmarks, custom frame/landmark colors, compare threshold.
 
 ## Quick Start (Local Dev)
 
@@ -120,7 +121,11 @@ kept for backward compatibility, not recommended for new integrations.
 | `GET` | `/api/v1/history` | Alias + filtering |
 | `DELETE` | `/api/v1/history` | Clear all history |
 | `GET` | `/api/v1/stats` | KPI summary + 7-day trend |
-| `POST` | `/api/v1/compare` | Landmark cosine similarity match |
+| `POST` | `/api/v1/compare` | Landmark cosine similarity match (Compare panel) |
+| `POST` | `/api/v1/gallery/enroll` | Enroll an SFace embedding under a name (Gallery panel) |
+| `GET` | `/api/v1/gallery` | List enrolled identities |
+| `DELETE` | `/api/v1/gallery/{id}` | Remove an enrolled identity |
+| `POST` | `/api/v1/gallery/recognize` | Match an embedding against the gallery |
 
 Interactive Swagger UI: http://localhost:8000/docs
 
@@ -166,10 +171,12 @@ Ramps to 20 virtual users hitting `/api/v1/health`, `/api/v1/detections`, and `/
 
 - **No auth by default.** `API_KEY` is opt-in (see [Security & rate limiting](#security--rate-limiting)) — set it before deploying anywhere public.
 - **Single-node Postgres.** No replication/failover configured; back up the `facevision_postgres_data` volume yourself.
-- **SQL migration has reserved-but-unused tables.** `users`, `face_gallery`, and `gallery_face_samples` exist in `database/migrations/001_init_schema.sql` for a future face-recognition upgrade but aren't wired into the current SQLAlchemy models/routers.
+- **`users`/`app_settings` remain reserved-but-unused** — `face_gallery`/`gallery_face_samples` are now active (see [ADR 0002](docs/adr/0002-sface-embeddings-for-gallery-recognition.md)), but no real user-account system exists; gallery entries are scoped by anonymous session ID, same as detection history.
 - **Rate limiting is in-memory, per-process.** Fine for a single backend instance; won't share limits across multiple replicas — swap for a Redis-backed limiter before horizontally scaling.
 - **Passive liveness signal is heuristic, not certified.** See [docs/face-detection-verification-checklist.md §11](docs/face-detection-verification-checklist.md#11-liveness-detection) — do not rely on it for any security decision.
-- **"Compare" is landmark-geometry similarity, not face recognition.** See [docs/adr/0001-landmark-similarity-vs-embeddings.md](docs/adr/0001-landmark-similarity-vs-embeddings.md).
+- **"Compare" is landmark-geometry similarity, not face recognition** — the Gallery panel's enroll/recognize feature is real embedding-based recognition instead. See [ADR 0001](docs/adr/0001-landmark-similarity-vs-embeddings.md) and [ADR 0002](docs/adr/0002-sface-embeddings-for-gallery-recognition.md).
+- **Gallery recognition is a linear scan**, not a vector index (pgvector/FAISS) — fine at personal scale, would need revisiting for a large number of enrolled identities.
+- **`POST /api/v1/gallery/recognize` is intentionally not gated behind `API_KEY`** (a visitor needs to check faces against the gallery to use the feature) — it's rate-limited instead.
 
 Full engineering checklist, gap analysis, and honest production-readiness assessment: [docs/face-detection-verification-checklist.md](docs/face-detection-verification-checklist.md).
 
