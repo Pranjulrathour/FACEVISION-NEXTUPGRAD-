@@ -14,11 +14,13 @@ import type {
 import { loadImage, validateImage, validateImageSignature } from "@/lib/image";
 import { YuNetDetector } from "@/lib/yunet";
 import { SFaceEmbedder } from "@/lib/sface";
+import { MiniFASNetClassifier } from "@/lib/minifasnet";
 import { deepEqualFace } from "@/lib/face-math";
 import {
   runDetectionPipeline,
   matchFaces,
   embedFace,
+  checkLiveness,
   FacePipelineError,
 } from "@/lib/face-pipeline";
 import { LivenessHeuristic } from "@/lib/liveness";
@@ -50,6 +52,7 @@ function uid(): string {
 export function FaceVision() {
   const detector = useRef<YuNetDetector | null>(null);
   const embedder = useRef<SFaceEmbedder | null>(null);
+  const antiSpoof = useRef<MiniFASNetClassifier | null>(null);
   const lastSource = useRef<HTMLImageElement | HTMLVideoElement | null>(null);
   const cameraLiveness = useRef<LivenessHeuristic>(new LivenessHeuristic());
   const stream = useRef<MediaStream | null>(null);
@@ -78,6 +81,8 @@ export function FaceVision() {
   const [selectedFaceIdx, setSelectedFaceIdx] = useState<number | null>(null);
   const [apiAvailable, setApiAvailable] = useState(false);
   const [embedderStatus, setEmbedderStatus] = useState<RuntimeState>("idle");
+  const [antiSpoofStatus, setAntiSpoofStatus] = useState<RuntimeState>("idle");
+  const [antiSpoofResults, setAntiSpoofResults] = useState<Record<number, { label: string; confidence: number }>>({});
   const [galleryEntries, setGalleryEntries] = useState<GalleryEntry[]>([]);
   const [galleryBusy, setGalleryBusy] = useState(false);
   const [recognizedNames, setRecognizedNames] = useState<Record<number, string>>({});
@@ -249,6 +254,58 @@ export function FaceVision() {
     }
   }, []);
 
+  const prepareAntiSpoof = useCallback(async () => {
+    if (antiSpoof.current) return true;
+    setAntiSpoofStatus("loading");
+    setStatus("Loading the anti-spoofing model (MiniFASNet, ~2MB, cached after first load)…");
+    try {
+      const instance = new MiniFASNetClassifier();
+      await instance.initialize();
+      antiSpoof.current = instance;
+      setAntiSpoofStatus("ready");
+      return true;
+    } catch (err) {
+      console.error("[FaceVision] Failed to load anti-spoofing model:", err);
+      setAntiSpoofStatus("error");
+      setStatus("Anti-spoofing model is unavailable. Add the MiniFASNet model file and refresh.");
+      return false;
+    }
+  }, []);
+
+  const checkFaceLiveness = useCallback(
+    async (face: Face, faceIdx: number) => {
+      if (!lastSource.current) return;
+      if (!(await prepareAntiSpoof())) return;
+      setGalleryBusy(true);
+      try {
+        const result = await checkLiveness(
+          antiSpoof.current!,
+          lastSource.current,
+          face.box,
+          lastSource.current instanceof HTMLVideoElement
+            ? lastSource.current.videoWidth
+            : lastSource.current.naturalWidth,
+          lastSource.current instanceof HTMLVideoElement
+            ? lastSource.current.videoHeight
+            : lastSource.current.naturalHeight
+        );
+        setAntiSpoofResults((prev) => ({ ...prev, [faceIdx]: result }));
+        setStatus(
+          result.label === "real"
+            ? `Liveness check: likely a real face (${Math.round(result.confidence * 100)}% confidence). Not a certified anti-spoofing result.`
+            : `Liveness check: possible spoof — photo or screen replay (${Math.round(result.confidence * 100)}% confidence). Not a certified anti-spoofing result.`
+        );
+      } catch (err) {
+        console.error("[FaceVision] Liveness check failed:", err);
+        const detail = err instanceof Error ? err.message : String(err);
+        setStatus(`Liveness check failed — ${detail}.`);
+      } finally {
+        setGalleryBusy(false);
+      }
+    },
+    [prepareAntiSpoof]
+  );
+
   const refreshGallery = useCallback(async () => {
     const result = await api.listGallery();
     if (result) setGalleryEntries(result.items);
@@ -361,6 +418,7 @@ export function FaceVision() {
         );
         setFaces(found);
         setRecognizedNames({});
+        setAntiSpoofResults({});
         persistCurrent(found);
         if (!found.length) {
           setStatus(`No faces detected (${quality.detail})`);
@@ -786,6 +844,11 @@ export function FaceVision() {
                       {recognizedNames[i] && (
                         <small className="recognized-label">Recognized: {recognizedNames[i]}</small>
                       )}
+                      {antiSpoofResults[i] && (
+                        <small className={`liveness-label ${antiSpoofResults[i].label}`}>
+                          Liveness: {antiSpoofResults[i].label} ({Math.round(antiSpoofResults[i].confidence * 100)}%)
+                        </small>
+                      )}
                     </div>
                     <div className="face-card-actions">
                       <button
@@ -825,6 +888,17 @@ export function FaceVision() {
                         }}
                       >
                         Recognize
+                      </button>
+                      <button
+                        className="chip chip-liveness"
+                        disabled={galleryBusy}
+                        title="Real anti-spoofing model check — not certified, see docs"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void checkFaceLiveness(face, i);
+                        }}
+                      >
+                        Check Liveness
                       </button>
                     </div>
                   </div>

@@ -4,12 +4,15 @@ import {
   matchFaces,
   embedFace,
   matchFaceEmbeddings,
+  checkLiveness,
   FacePipelineError,
   EmbeddingError,
+  LivenessCheckError,
 } from "./face-pipeline";
 import { LivenessHeuristic } from "./liveness";
 import type { FaceDetector } from "./face-detector";
 import type { FaceEmbedder } from "./face-embedder";
+import type { AntiSpoofClassifier } from "./anti-spoof-classifier";
 import type { Face } from "./face-types";
 
 function makeFace(overrides: Partial<Face> = {}): Face {
@@ -222,5 +225,26 @@ describe("matchFaceEmbeddings", () => {
     const embedding = new Float32Array(128).fill(0.1);
     const result = matchFaceEmbeddings(embedding, embedding, 0.99);
     expect(result.threshold).toBe(0.99);
+  });
+});
+
+function makeFakeAntiSpoofClassifier(result: { label: "real" | "fake"; confidence: number }): AntiSpoofClassifier {
+  return {
+    initialize: vi.fn().mockResolvedValue("wasm"),
+    classify: vi.fn().mockResolvedValue(result),
+    provider: "wasm",
+    modelVersion: "fake-antispoof-v1",
+  };
+}
+
+describe("checkLiveness", () => {
+  it("throws LivenessCheckError when cropping fails (no canvas in this test env)", async () => {
+    const classifier = makeFakeAntiSpoofClassifier({ label: "real", confidence: 0.9 });
+    const face = makeFace();
+
+    await expect(
+      checkLiveness(classifier, makeFakeImage(1000, 1000), face.box, 1000, 1000)
+    ).rejects.toThrow(LivenessCheckError);
+    expect(classifier.classify).not.toHaveBeenCalled();
   });
 });

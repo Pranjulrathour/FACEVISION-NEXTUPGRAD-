@@ -1,5 +1,6 @@
 import type { FaceDetector } from "./face-detector";
 import type { FaceEmbedder } from "./face-embedder";
+import type { AntiSpoofClassifier, AntiSpoofResult } from "./anti-spoof-classifier";
 import type { Face, FaceLandmarks, FaceMatchResult } from "./face-types";
 import { validateDecodedImageDimensions } from "./image";
 import { assessFaces, type FaceQualityOptions, type FaceQualityResult } from "./face-quality";
@@ -7,6 +8,7 @@ import { LivenessHeuristic, type LivenessObservation } from "./liveness";
 import { compareFaces, matchEmbeddings } from "./face-math";
 import { cropFaceImageData } from "./face-crop";
 import { alignFace } from "./face-alignment";
+import { cropForAntiSpoof } from "./antispoof-crop";
 import type { PixelBuffer } from "./pixel-analysis";
 
 /**
@@ -221,4 +223,41 @@ export function matchFaceEmbeddings(
   threshold?: number
 ): FaceMatchResult {
   return matchEmbeddings(embeddingA, embeddingB, threshold);
+}
+
+export type LivenessCheckErrorCode = "CROP_FAILED";
+
+export class LivenessCheckError extends Error {
+  constructor(public readonly code: LivenessCheckErrorCode, message: string) {
+    super(message);
+    this.name = "LivenessCheckError";
+  }
+}
+
+/**
+ * Real, on-demand anti-spoofing check (checklist §11) using a trained
+ * model (MiniFASNet by default) — distinct from LivenessHeuristic's
+ * continuous, cheap, movement-based signal used in camera mode. This is
+ * the stronger check: it can flag a single still photo held up to the
+ * camera as fake, which the movement heuristic alone cannot do reliably.
+ * Neither is a certified/iBeta-tested anti-spoofing solution — see
+ * docs/face-detection-verification-checklist.md §11.
+ */
+export async function checkLiveness(
+  classifier: AntiSpoofClassifier,
+  source: CanvasImageSource,
+  faceBox: Face["box"],
+  sourceWidth: number,
+  sourceHeight: number,
+  timeoutMs = DEFAULT_INFERENCE_TIMEOUT_MS
+): Promise<AntiSpoofResult> {
+  const patch = cropForAntiSpoof(source, faceBox, sourceWidth, sourceHeight);
+  if (!patch) {
+    throw new LivenessCheckError("CROP_FAILED", "Could not crop the face for liveness checking (no canvas available).");
+  }
+  return withTimeout(
+    classifier.classify(patch),
+    timeoutMs,
+    `Liveness check timed out after ${timeoutMs}ms.`
+  );
 }
