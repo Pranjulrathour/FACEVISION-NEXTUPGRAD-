@@ -10,9 +10,11 @@ import type {
   StatsSummary,
   AppSettings,
 } from "@/lib/face-types";
-import { loadImage, validateDecodedImageDimensions, validateImage } from "@/lib/image";
+import { loadImage, validateImage } from "@/lib/image";
 import { YuNetDetector } from "@/lib/yunet";
-import { compareFaces as localCompareFaces, deepEqualFace } from "@/lib/face-math";
+import { deepEqualFace } from "@/lib/face-math";
+import { runDetectionPipeline, matchFaces, FacePipelineError } from "@/lib/face-pipeline";
+import { LivenessHeuristic } from "@/lib/liveness";
 import {
   saveDetection as saveLocal,
   getHistory as getLocalHistory,
@@ -40,6 +42,7 @@ function uid(): string {
 
 export function FaceVision() {
   const detector = useRef<YuNetDetector | null>(null);
+  const cameraLiveness = useRef<LivenessHeuristic>(new LivenessHeuristic());
   const stream = useRef<MediaStream | null>(null);
   const video = useRef<HTMLVideoElement | null>(null);
   const canvas = useRef<HTMLCanvasElement | null>(null);
@@ -48,6 +51,7 @@ export function FaceVision() {
   const [mode, setMode] = useState<DetectionMode>("upload");
   const [runtime, setRuntime] = useState<RuntimeState>("idle");
   const [engine, setEngine] = useState<string>("");
+  const [livenessSignal, setLivenessSignal] = useState<string | null>(null);
   const [status, setStatus] = useState("Choose an image or start your camera.");
   const [faces, setFaces] = useState<Face[]>([]);
   const [preview, setPreview] = useState<string | null>(null);
@@ -223,21 +227,16 @@ export function FaceVision() {
   const detectImage = useCallback(
     async (url: string, confidence: number, nms: number) => {
       const image = await loadImage(url);
-      const dimensionError = validateDecodedImageDimensions(image);
-      if (dimensionError) {
-        setStatus(dimensionError);
-        return;
-      }
       if (!(await prepareDetector())) return;
       setProcessing(true);
       setStatus("Scanning locally — your image never leaves this device.");
       try {
-        const found = await detector.current!.detect(
+        const { faces: found, quality } = await runDetectionPipeline(
+          detector.current!,
           image,
           image.naturalWidth,
           image.naturalHeight,
-          confidence,
-          nms
+          { confidenceThreshold: confidence, nmsThreshold: nms }
         );
         refreshEngine();
         draw(
@@ -253,10 +252,14 @@ export function FaceVision() {
         setStatus(
           found.length
             ? `${found.length} face${found.length === 1 ? "" : "s"} detected.`
-            : "No faces detected. Try a clearer image."
+            : `No faces detected (${quality.detail})`
         );
       } catch (err) {
         console.error("[FaceVision] Image detection failed:", err);
+        if (err instanceof FacePipelineError) {
+          setStatus(err.message);
+          return;
+        }
         const detail = err instanceof Error ? err.message : String(err);
         setStatus(`Detection failed — ${detail}. Try another image or refresh the page.`);
       } finally {
@@ -289,6 +292,7 @@ export function FaceVision() {
     if (frame.current) cancelAnimationFrame(frame.current);
     stream.current?.getTracks().forEach((track) => track.stop());
     stream.current = null;
+    setLivenessSignal(null);
   }, []);
 
   const startCamera = useCallback(
@@ -304,6 +308,8 @@ export function FaceVision() {
         video.current.srcObject = stream.current;
         await video.current.play();
         setStatus("Camera is live. Processing happens only in your browser.");
+        cameraLiveness.current.reset();
+        setLivenessSignal(null);
         let busy = false;
         let cameraFailures = 0;
         let lastPersistAt = 0;
@@ -312,13 +318,18 @@ export function FaceVision() {
           if (element && element.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && !busy) {
             busy = true;
             try {
-              const found = await detector.current!.detect(
+              const { faces: found, liveness } = await runDetectionPipeline(
+                detector.current!,
                 element,
                 element.videoWidth,
                 element.videoHeight,
-                confidence,
-                nms
+                {
+                  confidenceThreshold: confidence,
+                  nmsThreshold: nms,
+                  livenessHeuristic: cameraLiveness.current,
+                }
               );
+              if (liveness) setLivenessSignal(liveness.signal);
               cameraFailures = 0;
               draw(
                 element,
@@ -435,7 +446,7 @@ export function FaceVision() {
         );
         if (res) setCompareResult(res);
       } else {
-        const res = localCompareFaces(compareSlots[0], compareSlots[1], settings.compareThreshold);
+        const res = matchFaces(compareSlots[0], compareSlots[1], settings.compareThreshold);
         setCompareResult(res);
       }
     } finally {
@@ -505,6 +516,11 @@ export function FaceVision() {
               ? `${engine} acceleration active`
               : "Model loads when needed"}
           </small>
+          {mode === "camera" && livenessSignal && (
+            <small title="Heuristic signal only — not certified anti-spoofing">
+              Liveness: {livenessSignal.replace(/_/g, " ")}
+            </small>
+          )}
         </div>
       </section>
 
