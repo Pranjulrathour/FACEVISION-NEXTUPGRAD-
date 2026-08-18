@@ -24,7 +24,7 @@ export function normalizeLandmarks(
   ]).flat();
 }
 
-export function cosineSimilarity(a: number[], b: number[]): number {
+export function cosineSimilarity(a: ArrayLike<number>, b: ArrayLike<number>): number {
   if (a.length !== b.length || a.length === 0) return 0;
   let dot = 0,
     normA = 0,
@@ -72,6 +72,25 @@ export function estimateYawn(landmarks: FaceLandmarks): number {
   const noseToMouth = euclideanDistance(landmarks.nose, mouthMidpoint);
   if (noseToMouth === 0) return 0;
   return mouthWidth / noseToMouth;
+}
+
+/**
+ * Match two face **embeddings** (e.g. from SFaceEmbedder, checklist §10) —
+ * distinct from compareFaces() above, which compares landmark geometry.
+ * Default threshold is SFace's own calibrated cosine-similarity operating
+ * point (0.363), not a value tuned by this app.
+ */
+export function matchEmbeddings(
+  embeddingA: ArrayLike<number>,
+  embeddingB: ArrayLike<number>,
+  threshold = 0.363
+): FaceMatchResult {
+  const similarity = cosineSimilarity(embeddingA, embeddingB);
+  return {
+    similarity: Math.max(-1, Math.min(1, similarity)),
+    isMatch: similarity >= threshold,
+    threshold,
+  };
 }
 
 export function deepEqualFace(a: Face, b: Face): boolean {
