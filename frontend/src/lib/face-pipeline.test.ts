@@ -110,6 +110,58 @@ describe("runDetectionPipeline", () => {
 
     expect(result.liveness).toBeUndefined();
   });
+
+  it("times out if detection hangs longer than inferenceTimeoutMs", async () => {
+    const detector: FaceDetector = {
+      initialize: vi.fn().mockResolvedValue("wasm"),
+      detect: vi.fn().mockImplementation(() => new Promise(() => {})), // never resolves
+      provider: "wasm",
+      modelVersion: "fake-detector-v1",
+    };
+    const image = makeFakeImage(1000, 1000);
+
+    await expect(
+      runDetectionPipeline(detector, image, 1000, 1000, { inferenceTimeoutMs: 20 })
+    ).rejects.toThrow(FacePipelineError);
+  });
+
+  it("does not time out when detection resolves well within the limit", async () => {
+    const detector = makeFakeDetector([makeFace()]);
+    const image = makeFakeImage(1000, 1000);
+
+    const result = await runDetectionPipeline(detector, image, 1000, 1000, {
+      inferenceTimeoutMs: 5000,
+    });
+
+    expect(result.faces).toHaveLength(1);
+  });
+
+  it("does not crop or run pixel checks when enablePixelQualityChecks is unset", async () => {
+    const detector = makeFakeDetector([makeFace()]);
+    const image = makeFakeImage(1000, 1000);
+
+    // No real `document` in this test environment — if the pipeline tried
+    // to crop, cropFaceImageData() would just return null anyway, but this
+    // test asserts the *default* behavior is not to attempt it, by relying
+    // on quality still resolving OK purely from geometry checks (which it
+    // would either way) — the meaningful assertion is that this doesn't
+    // throw even though there's no canvas available at all.
+    const result = await runDetectionPipeline(detector, image, 1000, 1000);
+    expect(result.quality.code).toBe("OK");
+  });
+
+  it("does not throw when enablePixelQualityChecks is set but no canvas is available (non-browser test env)", async () => {
+    const detector = makeFakeDetector([makeFace()]);
+    const image = makeFakeImage(1000, 1000);
+
+    const result = await runDetectionPipeline(detector, image, 1000, 1000, {
+      enablePixelQualityChecks: true,
+    });
+    // cropFaceImageData() returns null without a real DOM, so pixel checks
+    // are silently skipped rather than crashing — quality falls back to
+    // geometry-only, same as if the option were off.
+    expect(result.quality.code).toBe("OK");
+  });
 });
 
 describe("matchFaces", () => {

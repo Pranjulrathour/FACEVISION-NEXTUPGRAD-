@@ -4,6 +4,8 @@ import { validateDecodedImageDimensions } from "./image";
 import { assessFaces, type FaceQualityOptions, type FaceQualityResult } from "./face-quality";
 import { LivenessHeuristic, type LivenessObservation } from "./liveness";
 import { compareFaces } from "./face-math";
+import { cropFaceImageData } from "./face-crop";
+import type { PixelBuffer } from "./pixel-analysis";
 
 /**
  * Client-side face processing pipeline, mirroring the stage structure from
@@ -46,9 +48,40 @@ export type DetectionPipelineOptions = {
    * can track movement across frames. Omit for single-shot upload
    * detections, where frame-to-frame liveness doesn't apply. */
   livenessHeuristic?: LivenessHeuristic;
+  /** Crop the highest-confidence face and run pixel-based blur/lighting
+   * checks (§9) on top of the always-on geometry checks. Off by default:
+   * cropping costs an extra canvas draw + two passes over the pixel data,
+   * which matters at camera-mode frame rates (30-60/sec) but is cheap for
+   * a single upload-mode detection — enable it there. */
+  enablePixelQualityChecks?: boolean;
+  /** Abort face detection if it takes longer than this (§12) — inference
+   * hanging indefinitely (a stuck WebGPU context, a corrupt frame) would
+   * otherwise leave the UI stuck in "processing" forever with no signal.
+   * Default 8000ms, generous for a 640x640 detection even on WASM. */
+  inferenceTimeoutMs?: number;
 };
 
-export type FacePipelineErrorCode = "SECURITY_CHECK_FAILED";
+export type FacePipelineErrorCode = "SECURITY_CHECK_FAILED" | "INFERENCE_TIMEOUT";
+
+const DEFAULT_INFERENCE_TIMEOUT_MS = 8000;
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new FacePipelineError("INFERENCE_TIMEOUT", message));
+    }, timeoutMs);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
 
 function isDecodedImageSource(
   source: HTMLImageElement | HTMLVideoElement
@@ -101,19 +134,27 @@ export async function runDetectionPipeline(
   // Letterbox scaling, BGR conversion, and mean-subtraction normalization
   // happen inside detector.detect() — tightly coupled to the model's
   // expected tensor shape, so preprocessing isn't split into a separate
-  // module here. See yunet.ts for that stage's implementation.
-  const faces = await detector.detect(
-    source,
-    width,
-    height,
-    options.confidenceThreshold,
-    options.nmsThreshold
+  // module here. See yunet.ts for that stage's implementation. Wrapped in
+  // a timeout (§12) so a stuck inference call can't hang the pipeline
+  // forever with no signal back to the caller.
+  const timeoutMs = options.inferenceTimeoutMs ?? DEFAULT_INFERENCE_TIMEOUT_MS;
+  const faces = await withTimeout(
+    detector.detect(source, width, height, options.confidenceThreshold, options.nmsThreshold),
+    timeoutMs,
+    `Face detection timed out after ${timeoutMs}ms.`
   );
 
-  // --- Quality Assessment stage (+ implicit Face Crop) ---
+  // --- Quality Assessment stage (+ Face Crop) ---
   // The bounding box on each detected Face already describes its crop
-  // region; there is no separate cropped-image artifact produced here.
-  const quality = assessFaces(faces, width, height, options.qualityOptions);
+  // region for geometry checks. When enablePixelQualityChecks is set, the
+  // highest-confidence face is additionally cropped into real pixel data
+  // so assessFaces() can run its blur/lighting checks, not just geometry.
+  let primaryFaceImageData: PixelBuffer | undefined;
+  if (options.enablePixelQualityChecks && faces.length > 0) {
+    const primary = [...faces].sort((a, b) => b.confidence - a.confidence)[0];
+    primaryFaceImageData = cropFaceImageData(source, primary.box, width, height) ?? undefined;
+  }
+  const quality = assessFaces(faces, width, height, options.qualityOptions, primaryFaceImageData);
 
   // --- Optional Liveness stage ---
   let liveness: LivenessObservation | undefined;
