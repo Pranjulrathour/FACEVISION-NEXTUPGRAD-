@@ -127,8 +127,9 @@ Interactive Swagger UI: http://localhost:8000/docs
 | `API_KEY` | unset (disabled) | When set, `X-API-Key` is required on `POST /api/detections`, `DELETE /api/detections/{id}`, and `DELETE /api/history` |
 | `DETECTIONS_RATE_LIMIT_PER_MIN` | `30` | Per-IP limit on `POST /api/detections` |
 | `COMPARE_RATE_LIMIT_PER_MIN` | `30` | Per-IP limit on `POST /api/compare` |
+| `RETENTION_DAYS` | unset (disabled) | If set, `python backend/scripts/purge_old_detections.py` deletes detections older than this many days. See [docs/privacy-retention-policy.md](docs/privacy-retention-policy.md). |
 
-Set `API_KEY` before any real deployment — it is intentionally a no-op in local dev so the anonymous-write flow keeps working out of the box.
+Set `API_KEY` before any real deployment — it is intentionally a no-op in local dev so the anonymous-write flow keeps working out of the box. All backend configuration is centralized in [backend/app/core/config.py](backend/app/core/config.py).
 
 ## Verification
 
@@ -144,6 +145,8 @@ cd backend
 pip install -r requirements.txt
 pytest -v
 ```
+
+CI also runs `npm audit --audit-level=high` and `pip-audit -r requirements.txt --strict` on every push — dependency CVEs fail the build, not just a manual check.
 
 ### Load testing
 
@@ -161,6 +164,10 @@ Ramps to 20 virtual users hitting `/api/health`, `/api/detections`, and `/api/st
 - **Single-node Postgres.** No replication/failover configured; back up the `facevision_postgres_data` volume yourself.
 - **SQL migration has reserved-but-unused tables.** `users`, `face_gallery`, and `gallery_face_samples` exist in `database/migrations/001_init_schema.sql` for a future face-recognition upgrade but aren't wired into the current SQLAlchemy models/routers.
 - **Rate limiting is in-memory, per-process.** Fine for a single backend instance; won't share limits across multiple replicas — swap for a Redis-backed limiter before horizontally scaling.
+- **Passive liveness signal is heuristic, not certified.** See [docs/face-detection-verification-checklist.md §11](docs/face-detection-verification-checklist.md#11-liveness-detection) — do not rely on it for any security decision.
+- **"Compare" is landmark-geometry similarity, not face recognition.** See [docs/adr/0001-landmark-similarity-vs-embeddings.md](docs/adr/0001-landmark-similarity-vs-embeddings.md).
+
+Full engineering checklist, gap analysis, and honest production-readiness assessment: [docs/face-detection-verification-checklist.md](docs/face-detection-verification-checklist.md).
 
 ## Deployment Documentation
 
