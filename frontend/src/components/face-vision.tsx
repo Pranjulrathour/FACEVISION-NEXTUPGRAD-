@@ -10,7 +10,7 @@ import type {
   StatsSummary,
   AppSettings,
 } from "@/lib/face-types";
-import { loadImage, validateImage } from "@/lib/image";
+import { loadImage, validateDecodedImageDimensions, validateImage } from "@/lib/image";
 import { YuNetDetector } from "@/lib/yunet";
 import { compareFaces as localCompareFaces, deepEqualFace } from "@/lib/face-math";
 import {
@@ -96,6 +96,7 @@ export function FaceVision() {
         faces: found,
         imageName: mode === "upload" && preview ? preview.slice(0, 60) : undefined,
         imageDataUrl: settings.saveHistory ? toDataUrl() ?? undefined : undefined,
+        modelVersion: detector.current?.modelVersion,
       };
       saveLocal(record);
       setHistory(getLocalHistory());
@@ -222,6 +223,11 @@ export function FaceVision() {
   const detectImage = useCallback(
     async (url: string, confidence: number, nms: number) => {
       const image = await loadImage(url);
+      const dimensionError = validateDecodedImageDimensions(image);
+      if (dimensionError) {
+        setStatus(dimensionError);
+        return;
+      }
       if (!(await prepareDetector())) return;
       setProcessing(true);
       setStatus("Scanning locally — your image never leaves this device.");
