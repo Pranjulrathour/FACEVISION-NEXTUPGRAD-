@@ -1,7 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
-import { runDetectionPipeline, matchFaces, FacePipelineError } from "./face-pipeline";
+import {
+  runDetectionPipeline,
+  matchFaces,
+  embedFace,
+  matchFaceEmbeddings,
+  FacePipelineError,
+  EmbeddingError,
+} from "./face-pipeline";
 import { LivenessHeuristic } from "./liveness";
 import type { FaceDetector } from "./face-detector";
+import type { FaceEmbedder } from "./face-embedder";
 import type { Face } from "./face-types";
 
 function makeFace(overrides: Partial<Face> = {}): Face {
@@ -176,6 +184,43 @@ describe("matchFaces", () => {
     const faceA = makeFace();
     const faceB = makeFace({ confidence: 0.1 }); // confidence doesn't affect similarity, just sanity
     const result = matchFaces(faceA, faceB, 0.99);
+    expect(result.threshold).toBe(0.99);
+  });
+});
+
+function makeFakeEmbedder(): FaceEmbedder {
+  return {
+    initialize: vi.fn().mockResolvedValue("wasm"),
+    embed: vi.fn().mockResolvedValue(new Float32Array(128).fill(0.1)),
+    provider: "wasm",
+    modelVersion: "fake-embedder-v1",
+    embeddingDimension: 128,
+  };
+}
+
+describe("embedFace", () => {
+  it("throws EmbeddingError when alignment fails (no canvas in this test env)", async () => {
+    const embedder = makeFakeEmbedder();
+    const image = makeFakeImage(1000, 1000);
+    const face = makeFace();
+
+    await expect(embedFace(embedder, image, face.landmarks)).rejects.toThrow(EmbeddingError);
+    // Alignment failed before inference was ever attempted.
+    expect(embedder.embed).not.toHaveBeenCalled();
+  });
+});
+
+describe("matchFaceEmbeddings", () => {
+  it("matches identical embeddings using SFace's default threshold", () => {
+    const embedding = new Float32Array(128).fill(0.1);
+    const result = matchFaceEmbeddings(embedding, embedding);
+    expect(result.isMatch).toBe(true);
+    expect(result.similarity).toBeCloseTo(1);
+  });
+
+  it("respects a custom threshold", () => {
+    const embedding = new Float32Array(128).fill(0.1);
+    const result = matchFaceEmbeddings(embedding, embedding, 0.99);
     expect(result.threshold).toBe(0.99);
   });
 });

@@ -1,10 +1,12 @@
 import type { FaceDetector } from "./face-detector";
-import type { Face, FaceMatchResult } from "./face-types";
+import type { FaceEmbedder } from "./face-embedder";
+import type { Face, FaceLandmarks, FaceMatchResult } from "./face-types";
 import { validateDecodedImageDimensions } from "./image";
 import { assessFaces, type FaceQualityOptions, type FaceQualityResult } from "./face-quality";
 import { LivenessHeuristic, type LivenessObservation } from "./liveness";
-import { compareFaces } from "./face-math";
+import { compareFaces, matchEmbeddings } from "./face-math";
 import { cropFaceImageData } from "./face-crop";
+import { alignFace } from "./face-alignment";
 import type { PixelBuffer } from "./pixel-analysis";
 
 /**
@@ -167,12 +169,56 @@ export async function runDetectionPipeline(
 }
 
 /**
- * Optional Embedding + Matching Service stages. FaceVision has no trained
- * embedding model — "embedding" here means the landmark-geometry
- * normalization performed inside compareFaces() (face-math.ts), not a
- * learned identity vector. See docs/adr/0001-landmark-similarity-vs-embeddings.md
- * for why, and don't rely on this for real identity verification.
+ * Landmark-geometry Matching Service — the original, still-available
+ * comparison path (see docs/adr/0001-landmark-similarity-vs-embeddings.md).
+ * For real identity-embedding matching, see embedFace() + matchEmbeddings()
+ * below (docs/adr/0002-sface-embeddings-for-gallery-recognition.md).
  */
 export function matchFaces(faceA: Face, faceB: Face, threshold?: number): FaceMatchResult {
   return compareFaces(faceA, faceB, threshold);
+}
+
+export type EmbeddingErrorCode = "ALIGNMENT_FAILED";
+
+export class EmbeddingError extends Error {
+  constructor(public readonly code: EmbeddingErrorCode, message: string) {
+    super(message);
+    this.name = "EmbeddingError";
+  }
+}
+
+/**
+ * Optional Embedding stage, using a real trained model (SFace by default —
+ * see sface.ts). Aligns the face to the model's expected canonical pose
+ * (face-alignment.ts) before running inference; feeding an unaligned crop
+ * to an embedding model produces a low-quality, not-comparable vector.
+ */
+export async function embedFace(
+  embedder: FaceEmbedder,
+  source: CanvasImageSource,
+  landmarks: FaceLandmarks,
+  timeoutMs = DEFAULT_INFERENCE_TIMEOUT_MS
+): Promise<Float32Array> {
+  const aligned = alignFace(source, landmarks);
+  if (!aligned) {
+    throw new EmbeddingError("ALIGNMENT_FAILED", "Could not align the face for embedding (no canvas available).");
+  }
+  return withTimeout(
+    embedder.embed(aligned),
+    timeoutMs,
+    `Face embedding timed out after ${timeoutMs}ms.`
+  );
+}
+
+/**
+ * Matching Service stage for real embeddings (as opposed to matchFaces()'s
+ * landmark-geometry comparison above). Threshold defaults to SFace's own
+ * calibrated cosine-similarity operating point.
+ */
+export function matchFaceEmbeddings(
+  embeddingA: Float32Array,
+  embeddingB: Float32Array,
+  threshold?: number
+): FaceMatchResult {
+  return matchEmbeddings(embeddingA, embeddingB, threshold);
 }
