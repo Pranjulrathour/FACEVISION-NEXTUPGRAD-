@@ -34,9 +34,9 @@ files/services — not a single tightly-coupled script. Good starting position.
 | Face Detection | [x] YuNet ONNX, client-side, [yunet.ts](../frontend/src/lib/yunet.ts) |
 | Face Recognition (deep embeddings) | [ ] not implemented |
 | Face Verification | [~] landmark-geometry cosine similarity only, **not** a learned embedding model — see §10 |
-| Face Liveness Detection | [ ] not implemented — see §11 |
+| Face Liveness Detection | [~] heuristic passive-liveness signal only (frame-to-frame landmark movement), **not** certified anti-spoofing — see §11 |
 | Multiple-face detection | [x] supported, NMS-filtered |
-| Face quality assessment | [~] confidence threshold only, no blur/brightness/pose checks — see §9 |
+| Face quality assessment | [x] structured codes (`NO_FACE`/`FACE_TOO_SMALL`/`LOW_CONFIDENCE`/`EXCESSIVE_POSE`/`MULTIPLE_FACES`/`INVALID_IMAGE`) via [face-quality.ts](../frontend/src/lib/face-quality.ts) — see §9 |
 | Face tracking in video | [ ] not implemented (per-frame detection only, live camera mode) |
 | Face embedding generation | [ ] not implemented (uses 5-point landmark geometry instead) |
 | Identity matching | [~] similarity score only, no enrolled-identity gallery wired up (schema has unused `face_gallery`/`gallery_face_samples` tables) |
@@ -77,7 +77,7 @@ persistence and can be swapped or removed without touching the detector.
 
 - [x] Presentation (routers) → Application (services) → Infrastructure (models/database) layering exists in `backend/app`
 - [x] AI inference (`yunet.ts`) is isolated from UI state management (`face-vision.tsx`) and from the backend entirely
-- [ ] No formal `IFaceDetector`-style interface exists yet in TypeScript — `YuNetDetector` is a concrete class, not swapped behind an interface (see §5)
+- [x] `FaceDetector` TypeScript interface exists ([face-detector.ts](../frontend/src/lib/face-detector.ts)); `YuNetDetector implements FaceDetector` — see §5
 
 ---
 
@@ -97,24 +97,15 @@ persistence and can be swapped or removed without touching the detector.
 
 ## 5. AI Model Abstraction
 
-**Gap.** `YuNetDetector` in [yunet.ts](../frontend/src/lib/yunet.ts) is called directly from
-`face-vision.tsx`. There's no `FaceDetector` interface, so swapping models later means editing
-the component, not just adding a new implementation.
+**Done.** [face-detector.ts](../frontend/src/lib/face-detector.ts) defines a `FaceDetector`
+interface (`initialize()`, `detect()`, `provider`, `modelVersion`); `YuNetDetector implements
+FaceDetector`. `face-vision.tsx` still holds a concrete `useRef<YuNetDetector>`, but a future
+detector only needs to satisfy the interface, not be hand-integrated into the component.
 
-Recommended (not yet done):
-```typescript
-interface FaceDetector {
-  init(): Promise<void>;
-  detect(image: ImageData): Promise<Face[]>;
-}
-
-class YuNetDetector implements FaceDetector { ... }
-// future: class RetinaFaceDetector implements FaceDetector { ... }
-```
-Same idea applies on the backend for `face_compare_service.compare_faces` — it's a plain
-function, fine for one algorithm, but if a real embedding-based verifier is added later, wrap
-both behind a shared `FaceVerifier` protocol (Python `typing.Protocol`) so routers don't care
-which implementation is active.
+Backend `face_compare_service.compare_faces` remains a plain function — still fine for one
+algorithm. If a real embedding-based verifier is added later (see
+[ADR 0001](adr/0001-landmark-similarity-vs-embeddings.md)), wrap both behind a shared
+`FaceVerifier` protocol (Python `typing.Protocol`) at that point, not preemptively.
 
 ---
 
@@ -129,8 +120,9 @@ which implementation is active.
 - [ ] No explicit magic-byte/file-signature validation beyond browser `File.type` — a renamed
   file could bypass MIME checks before hitting the ONNX decoder. Low risk here since decoding
   happens client-side and a malformed image just fails to decode, but worth knowing
-- [ ] No decompression-bomb protection on the frontend upload path (a 1KB file that decodes to
-  a huge bitmap could stall the tab) — not currently guarded
+- [x] Decompression-bomb guard added: [image.ts](../frontend/src/lib/image.ts)
+  `validateDecodedImageDimensions()` rejects decoded images over 40 megapixels regardless of
+  file size, wired into `face-vision.tsx`'s `detectImage()` right after decode
 
 ---
 
@@ -170,13 +162,22 @@ type Face = {
 
 ## 9. Face Quality Assessment
 
-**Real gap.** Only confidence threshold is checked. No blur, brightness, contrast, pose, or
-occlusion scoring exists. Failure reasons returned today are generic (empty result vs. some
-faces) — not the structured `NO_FACE` / `FACE_TOO_SMALL` / `IMAGE_TOO_BLURRY` style codes the
-checklist recommends.
+**Done (heuristic-based).** [face-quality.ts](../frontend/src/lib/face-quality.ts) exports
+`assessFaceQuality()`/`assessFaces()` returning structured codes: `OK`, `NO_FACE`,
+`MULTIPLE_FACES`, `FACE_TOO_SMALL`, `LOW_CONFIDENCE`, `EXCESSIVE_POSE`, `INVALID_IMAGE` — all
+configurable via options (`minRelativeFaceSize`, `minConfidence`, `maxPoseAsymmetryRatio`,
+`rejectMultipleFaces`), covered by 10 unit tests.
 
-If FaceVision ever needs "is this a usable photo" logic (e.g., for a future verification
-flow), this needs its own module — don't bolt it onto `YuNetDetector`.
+- [x] Structured failure codes (not a bare boolean)
+- [x] Face-size-relative-to-image and pose-asymmetry (landmark geometry) checks
+- [ ] **Blur/brightness/contrast/occlusion scoring is not implemented** — these require actual
+  pixel sampling (variance-of-Laplacian for blur, mean luminance for brightness), which this
+  module doesn't do; it's a pure geometry/confidence module, not a pixel-analysis one. Wiring
+  pixel-based checks would need access to the cropped face `ImageData`, not yet threaded
+  through from `face-vision.tsx`'s canvas.
+- Not yet wired into the main detection flow's UI — the module exists and is tested, but
+  `face-vision.tsx` doesn't currently call it to filter/label results in the UI. Available for
+  a future "is this face usable" gate.
 
 ---
 
@@ -202,11 +203,18 @@ correctly — worth keeping that framing honest in any product copy.
 
 ## 11. Liveness Detection
 
-**Not implemented — and correctly out of scope today**, since FaceVision doesn't gate
-authentication, payments, or KYC on face matching. If that ever changes, liveness becomes
-mandatory before compare results could be trusted for anything security-sensitive — a static
-photo of a photo currently passes detection + "compare" with a high similarity score, which is
-fine for a demo/portfolio feature and unsafe for any real auth decision.
+**Heuristic signal added, explicitly not certified.** [liveness.ts](../frontend/src/lib/liveness.ts)'s
+`LivenessHeuristic` tracks frame-to-frame landmark movement across a sliding window (camera
+mode); if average movement stays near-zero across the window, it flags
+`static_input_suspected` — catching the crudest spoofing case (a completely static photo held
+in front of the camera). It does **not** detect photo-of-a-photo, screen replay with motion, or
+a printed photo gently wobbled by hand, and is not wired into any decision gate — it's a
+diagnostic signal only, covered by 5 unit tests.
+
+FaceVision still doesn't gate authentication, payments, or KYC on face matching, so this
+remains correctly out of the critical path. If that scope ever changes, this heuristic must be
+replaced with (not upgraded into) a real trained anti-spoofing model before compare results
+could be trusted for anything security-sensitive.
 
 ---
 
@@ -281,14 +289,11 @@ Actual routes (all under `/api`, see [backend/app/main.py](../backend/app/main.p
 - [x] Backend stores only bounding boxes, confidence scores, and 5-point landmark coordinates
   — never pixels
 - [x] `.env`/`.env.example` split correctly; secrets gitignored, never committed
-- [ ] No formal retention policy is enforced — `detection_records`/`face_records` persist
-  indefinitely unless a user calls `DELETE /api/history` themselves. There's no scheduled
-  purge job. Landmark coordinates are geometric metadata, not raw biometric templates, but
-  they're still tied to a `user_session_id` and should have a documented retention answer
-  (even if the honest answer today is "kept until manually cleared")
-- [ ] No documented answer yet to: what's stored / why / who can access it / how long / how
-  deleted — the checklist's four questions in §16 don't have a written answer anywhere. Worth
-  a short paragraph in the README's Privacy section.
+- [x] Retention policy now enforceable: `RETENTION_DAYS` setting +
+  `detection_service.purge_expired_detections()` + `backend/scripts/purge_old_detections.py`
+  (opt-in — unset by default so existing deployments aren't affected). Covered by unit tests.
+- [x] The four required questions (what/why/who/how-long/how-deleted) are now answered
+  concretely in [docs/privacy-retention-policy.md](privacy-retention-policy.md).
 
 ---
 
@@ -325,23 +330,27 @@ Actual routes (all under `/api`, see [backend/app/main.py](../backend/app/main.p
 
 ## 20. Configuration
 
-- [~] Thresholds are configurable **on the frontend** (confidence/NMS sliders in Settings
-  panel) — good, not hard-coded there
-- [ ] **Backend configuration is not centralized.** `os.getenv(...)` calls are scattered
-  across `main.py`, `database.py`, `core/security.py`, `core/rate_limit.py` instead of one
-  `Settings` object (e.g., `pydantic-settings` `BaseSettings`). Works fine today, but a env-var
-  typo in one of five different files is easier to miss than a typo in one schema. Worth
-  consolidating if the backend grows.
+- [x] Thresholds are configurable **on the frontend** (confidence/NMS sliders in Settings
+  panel) — not hard-coded there
+- [x] **Backend configuration centralized** in [core/config.py](../backend/app/core/config.py) —
+  a `pydantic-settings` `Settings` class documents `database_url`, `host`, `port`, `reload`,
+  `cors_origins`, and `retention_days` in one place, used by `main.py`, `database.py`, and
+  `run.py`. `API_KEY` and the per-route rate limits deliberately stay as live `os.getenv()`
+  reads in `core/security.py`/`core/rate_limit.py` (documented there) so tests can
+  monkeypatch them per-call — their meaning and defaults are still documented in `Settings` for
+  discoverability.
 
 ---
 
 ## 21. Model Versioning
 
-**Gap.** Nothing in a detection response records which YuNet model file, ONNX Runtime Web
-version, or confidence/NMS config produced it. If the bundled `.onnx` file is ever swapped,
-there's no way to trace historical detections back to "which model version made this call."
-Cheap fix: stamp a `modelVersion` string (e.g., `"yunet-2023mar"`) onto stored detection
-records.
+**Done.** `YuNetDetector.modelVersion` (`"yunet-2023mar"`, see
+[docs/model-card-yunet.md](model-card-yunet.md)) is stamped onto every persisted detection:
+`DetectionRecord.model_version` column ([database/migrations/002_add_model_version.sql](../database/migrations/002_add_model_version.sql)),
+threaded through `DetectionCreate`/`DetectionResponse` schemas and `detection_service`, and
+returned in `GET /api/detections/{id}`. Covered by unit + integration tests. Confidence/NMS
+thresholds are still request-time parameters, not stamped per-record — low priority since
+they're visible in the UI at detection time, not retroactively needed per historical row.
 
 ---
 
@@ -350,7 +359,7 @@ records.
 | Area | Status |
 |---|---|
 | Frontend unit tests | [x] `image.test.ts`, `yunet.test.ts`, `face-math.test.ts` — validation, NMS, and landmark-similarity logic covered |
-| Backend unit tests | [x] 18 tests covering detection/stats/compare services, security gate, rate limiter, DB URL normalization, init-db retry logic |
+| Backend unit tests | [x] 30 tests covering detection/stats/compare services, security gate, rate limiter, DB URL normalization, init-db retry logic, retention purge, full-pipeline HTTP integration |
 | Representative test dataset (lighting/skin tone/age/angle/occlusion diversity) | [ ] not built — tests use synthetic coordinate fixtures, not a real diverse image set |
 | Measured accuracy (precision/recall/FAR/FRR) | [ ] not measured — no benchmark numbers exist beyond "it works in manual testing" |
 | Security testing (malicious files, oversized payloads, replay/spoofing) | [~] payload size capped, schema-validated; no dedicated adversarial test suite |
@@ -426,28 +435,22 @@ backend/app/
   maintained)
 - [x] Frontend: ONNX Runtime Web, Next.js, React — all first-party/well-maintained
 - [x] CI runs `pip install` / `npm ci` against pinned lockfiles, catching drift early
-- [ ] No documented license/CVE review process — `npm audit` and `pip-audit`-style scanning
-  isn't wired into CI yet; the one real vulnerability found so far (vitest CVE) was caught
-  manually, not automatically
+- [x] CVE scanning now wired into CI: `npm audit --audit-level=high` (frontend) and
+  `pip-audit -r requirements.txt --strict` (backend), both in
+  [.github/workflows/ci.yml](../.github/workflows/ci.yml). Running this the first time found
+  and fixed 16 real CVEs across `python-multipart`, `starlette` (transitive via `fastapi`),
+  `pytest`, and `python-dotenv` — since patched by upgrading `fastapi` to 0.141.1 (pulling a
+  patched `starlette`), `python-multipart` to 0.0.31, `pytest` to 9.0.3, `python-dotenv` to
+  1.2.2. Both scans are clean as of this update.
 
 ---
 
 ## 32. AI Model Governance
 
-**Gap.** No model card exists for the bundled `face_detection_yunet_2023mar.onnx`. Recommended
-minimal card (add as `docs/model-card-yunet.md` when time allows):
-
-```
-Model: YuNet 2023mar
-Source: OpenCV Zoo (https://github.com/opencv/opencv_zoo)
-License: Apache 2.0 (already noted in README)
-Input: 640×640 RGB, BGR-converted, mean-subtracted
-Intended use: browser-side face bounding-box + 5-point landmark detection
-Known limitations: not evaluated for demographic parity; not a liveness or recognition model
-Runtime: ONNX Runtime Web 1.27, WebGPU-first / WASM fallback
-Confidence threshold: 0.75 (default, user-configurable)
-NMS IoU threshold: 0.35 (default, user-configurable)
-```
+**Done.** [docs/model-card-yunet.md](model-card-yunet.md) documents source, license, input
+shape, intended use, known limitations, defaults, and a governance rule (bump
+`YUNET_MODEL_VERSION` on any model swap, test against the existing suite plus a diverse image
+set per §22 before merging).
 
 ---
 
@@ -462,11 +465,13 @@ expands toward identity decisions, this becomes mandatory, not optional.
 
 ## 34–36. Unit / Integration / Performance Tests
 
-- [x] Unit tests: 12 frontend (Vitest) + 18 backend (pytest) — see §22
-- [~] Integration tests: FastAPI's `TestClient` is used for health-endpoint tests only; no
-  end-to-end test exercises the full detect→store→retrieve→stats pipeline against a real
-  Postgres instance in CI (the CI Postgres service exists but current tests don't hit it with
-  a full-pipeline scenario)
+- [x] Unit tests: 31 frontend (Vitest) + 30 backend (pytest)
+- [x] Integration tests: [test_full_pipeline_integration.py](../backend/tests/test_full_pipeline_integration.py)
+  exercises the full HTTP pipeline (create → retrieve → list → stats → compare → clear) via
+  `with TestClient(app) as client:` — which is required to trigger the app's lifespan
+  (`init_db()`) at all; discovered this the hard way (a bare `TestClient(app)` never runs
+  lifespan, so the original `test_health.py` never actually exercised `init_db()` either).
+  Verified against both a real Postgres instance and a file-based SQLite substitute.
 - [x] Performance: k6 script defines p95 < 500ms and <1% hard-failure-rate thresholds; not yet
   run against production to get a real baseline number
 
@@ -501,9 +506,10 @@ checklist's list is directly reusable as-is.
   privacy notes all live in the root [README.md](../README.md)
 - [x] Backend/database/deployment sub-docs exist (`backend/readme.md`, `database/readme.md`,
   `deployment/deployment.md`, `deployment/docker/readme.md`)
-- [ ] No dedicated model card (see §32) or architecture-decision-record (ADR) log — decisions
-  like "why landmark similarity instead of embeddings" live in conversation history and this
-  checklist, not a durable doc yet
+- [x] Model card ([docs/model-card-yunet.md](model-card-yunet.md)), privacy/retention policy
+  ([docs/privacy-retention-policy.md](privacy-retention-policy.md)), and an ADR log
+  ([docs/adr/0001-landmark-similarity-vs-embeddings.md](adr/0001-landmark-similarity-vs-embeddings.md))
+  now exist as durable docs, not just conversation history.
 
 ---
 
@@ -512,24 +518,25 @@ checklist's list is directly reusable as-is.
 - [x] Functional requirements documented (README + this file)
 - [ ] Model benchmarked against alternatives
 - [ ] Accuracy formally measured (precision/recall/FAR/FRR)
-- [~] Security testing: schema validation + payload caps done; no adversarial/spoofing test suite
+- [~] Security testing: schema validation + payload caps + CI CVE scanning done; no
+  adversarial/spoofing test suite
 - [x] Load testing tooling exists; not yet run against production for a real baseline
 - [ ] Memory testing (browser long-session soak test) not done
 - [x] API authenticated (opt-in `API_KEY`)
 - [x] Rate limiting exists
-- [x] Input validation exists (frontend + backend)
-- [ ] Biometric retention policy not formally documented (informally: "kept until user clears
-  history")
+- [x] Input validation exists (frontend + backend), including a decompression-bomb guard
+- [x] Biometric retention policy documented and enforceable (`RETENTION_DAYS` + purge script)
 - [x] Sensitive data never logged (verified)
-- [ ] Model versioning not stamped on records
+- [x] Model versioning stamped on records (`model_version` column)
 - [~] Basic observability (request logs); no dashboards/alerts
 - [x] Unit tests exist (frontend + backend)
-- [~] Integration tests exist for health only, not full pipeline
+- [x] Integration tests exist for the full detect→store→retrieve→stats→compare→clear pipeline
 - [~] Some failure scenarios tested (invalid compare payload, zero-size box, rate limit,
-  DB-not-ready retry); not exhaustive
-- [x] Documentation complete for current scope
+  DB-not-ready retry, decompression bomb, extreme pose); not exhaustive
+- [x] Documentation complete for current scope, including model card, privacy policy, and ADR
 - [ ] No formal code review process (solo project)
-- [ ] No automated dependency/license/CVE scanning in CI
+- [x] Automated dependency/CVE scanning wired into CI (npm audit + pip-audit); no license-review
+  process beyond that
 - [~] Rollback strategy: git history + Railway's deployment history serve this informally; no
   documented rollback runbook
 
@@ -553,8 +560,8 @@ the whole git history.*
 | Phase | Status |
 |---|---|
 | 1 — Proof of Concept (model selection) | [x] YuNet chosen and shipped; [ ] no written benchmark doc against alternatives |
-| 2 — Engineering Foundation (structure, abstraction, config, validation, error handling, logging, API) | [x] structure/validation/error-handling/logging/API done; [ ] AI abstraction interface not formalized (§5); [ ] config not centralized (§20) |
-| 3 — Quality (face quality, threshold calibration, multi-face, edge cases) | [~] thresholds configurable and tuned informally; [ ] no structured quality-assessment module (§9) |
+| 2 — Engineering Foundation (structure, abstraction, config, validation, error handling, logging, API) | [x] structure/validation/error-handling/logging/API/abstraction-interface/centralized-config all done (§5, §20) |
+| 3 — Quality (face quality, threshold calibration, multi-face, edge cases) | [x] thresholds configurable; structured quality-assessment module with codes exists (§9); [ ] pixel-based blur/lighting checks still not implemented |
 | 4 — Security (auth, rate limiting, input security, privacy) | [x] done — API key, rate limiting, input validation, no raw-image storage |
 | 5 — Performance (benchmark, load test, memory profiling) | [~] load-test script exists, not run against prod; no memory profiling done |
 | 6 — Production (monitoring, alerting, deployment, rollback, docs, security review) | [~] deployed to Railway with healthchecks; no monitoring/alerting; docs exist; no formal security review sign-off |
@@ -570,7 +577,8 @@ the whole git history.*
 5. **Multiple faces?** Supported and rendered; no business rule rejects multi-face detections.
 6. **No face?** Returns an empty result; UI shows "no face detected," no crash.
 7. **100MB image?** Frontend caps uploads at 12MB with a validation error before decode.
-8. **Decompression-bomb protection?** Not explicitly guarded — see §6 gap.
+8. **Decompression-bomb protection?** Now guarded — decoded dimensions are checked against a
+   40-megapixel cap regardless of file size (§6, §7).
 9. **Memory per request?** Not profiled; detection is client-side, so "per request" doesn't map
    to backend memory the way it would for a server-side inference API.
 10. **Model loaded per request?** No — loaded once via `prepareDetector()`, reused.
@@ -581,16 +589,23 @@ the whole git history.*
 13. **Inference takes 30s?** No explicit inference-level timeout; realistically a 640×640
     detection is fast (sub-second) so this hasn't been a practical issue.
 14. **Cancel an inference?** Not implemented.
-15. **Model replaceable without changing business logic?** Not yet — no interface abstraction
-    exists (§5); today it would require editing `face-vision.tsx`.
+15. **Model replaceable without changing business logic?** Closer — `YuNetDetector implements
+    FaceDetector` (§5), so a new implementation only needs to satisfy that interface. The
+    `useRef<YuNetDetector>` type in `face-vision.tsx` would still need widening to
+    `FaceDetector` to make the swap truly drop-in.
 16. **Where are face images stored?** Nowhere — never leave the browser.
-17. **Retention?** Detection metadata persists until a user clears history; no formal policy doc.
+17. **Retention?** Enforceable via `RETENTION_DAYS` + purge script; documented concretely in
+    [docs/privacy-retention-policy.md](privacy-retention-policy.md). Still opt-in/unset by
+    default, so the honest default answer is "kept until manually cleared" unless an operator
+    configures it.
 18. **Embeddings stored?** No — landmark coordinates only, and only if the backend is used.
 19. **Who can access them?** Anyone with the `API_KEY` (if set) can write; read endpoints are
     currently open (no per-session read restriction beyond the `userSessionId` query filter,
     which is client-supplied and not cryptographically bound to a session).
 20. **Biometric values in logs?** No — verified across every logging call in the codebase.
-21. **Spoofing handled?** No — no liveness detection exists (§11), by design given current scope.
+21. **Spoofing handled?** Only a crude heuristic (static-image detection via landmark
+    movement, §11) — not real anti-spoofing. Still by design given current scope; not relied
+    upon for any security decision.
 22. **Detection or identity verification?** Detection, plus a geometric similarity score — not
     identity verification against an enrolled database.
 23. **How was the threshold selected?** Manually tuned during development, not through a formal
@@ -609,10 +624,14 @@ the whole git history.*
     — rollback means reverting that file + the git commit, no runtime model-switching mechanism.
 
 **Bottom line:** this is a solid, honestly-scoped hobby/portfolio-grade implementation with
-real engineering discipline (layering, tests, CI, no raw biometric storage, rate limiting, API
-keys). It is *not* production-ready for any KYC/auth/payments use case — and per this
-checklist's own standard, it shouldn't be sold as one until §§9, 11, 21, 22–25, 32–33 are
-addressed.
+real engineering discipline (layering, tests, CI with CVE scanning, no raw biometric storage,
+rate limiting, API keys, model versioning, an enforceable retention policy, and a heuristic
+liveness signal that's honestly labeled as non-certified). It is *still not* production-ready
+for any KYC/auth/payments use case — the two items that would require fundamentally new
+capability (a real trained face-embedding model, and certified anti-spoofing) are tracked in
+[ADR 0001](adr/0001-landmark-similarity-vs-embeddings.md) as deliberate, revisitable decisions,
+not oversights. Formal model benchmarking (§4), measured accuracy (§22–25), and bias/fairness
+testing (§33) remain open — these require data and evaluation work, not just more code.
 
 ---
 
