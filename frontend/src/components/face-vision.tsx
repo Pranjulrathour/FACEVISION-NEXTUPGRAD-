@@ -10,7 +10,7 @@ import type {
   StatsSummary,
   AppSettings,
 } from "@/lib/face-types";
-import { loadImage, validateImage } from "@/lib/image";
+import { loadImage, validateImage, validateImageSignature } from "@/lib/image";
 import { YuNetDetector } from "@/lib/yunet";
 import { deepEqualFace } from "@/lib/face-math";
 import { runDetectionPipeline, matchFaces, FacePipelineError } from "@/lib/face-pipeline";
@@ -236,7 +236,14 @@ export function FaceVision() {
           image,
           image.naturalWidth,
           image.naturalHeight,
-          { confidenceThreshold: confidence, nmsThreshold: nms }
+          {
+            confidenceThreshold: confidence,
+            nmsThreshold: nms,
+            // Pixel-based blur/lighting checks cost an extra canvas crop —
+            // affordable for one upload-mode detection, not for every
+            // camera frame (see the camera-mode call below, which omits this).
+            enablePixelQualityChecks: true,
+          }
         );
         refreshEngine();
         draw(
@@ -249,11 +256,15 @@ export function FaceVision() {
         );
         setFaces(found);
         persistCurrent(found);
-        setStatus(
-          found.length
-            ? `${found.length} face${found.length === 1 ? "" : "s"} detected.`
-            : `No faces detected (${quality.detail})`
-        );
+        if (!found.length) {
+          setStatus(`No faces detected (${quality.detail})`);
+        } else if (quality.code !== "OK") {
+          setStatus(
+            `${found.length} face${found.length === 1 ? "" : "s"} detected — ${quality.detail}`
+          );
+        } else {
+          setStatus(`${found.length} face${found.length === 1 ? "" : "s"} detected.`);
+        }
       } catch (err) {
         console.error("[FaceVision] Image detection failed:", err);
         if (err instanceof FacePipelineError) {
@@ -275,6 +286,11 @@ export function FaceVision() {
       const error = validateImage(file);
       if (error) {
         setStatus(error);
+        return;
+      }
+      const signatureError = await validateImageSignature(file);
+      if (signatureError) {
+        setStatus(signatureError);
         return;
       }
       if (preview) URL.revokeObjectURL(preview);

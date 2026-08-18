@@ -1,3 +1,9 @@
+import {
+  detectImageFormat,
+  formatMatchesDeclaredType,
+  readSignatureBytes,
+} from "./image-signature";
+
 export const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 export const SUPPORTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
 
@@ -12,6 +18,36 @@ export const MAX_IMAGE_PIXELS = 40_000_000;
 export function validateImage(file: File): string | null {
   if (!SUPPORTED_IMAGE_TYPES.includes(file.type)) return "Choose a JPG, PNG, or WebP image.";
   if (file.size > MAX_IMAGE_BYTES) return "Image must be 12 MB or smaller.";
+  return null;
+}
+
+/**
+ * Second-stage validation: verify the file's actual leading bytes, not just
+ * its declared MIME type (§6). `validateImage()` above only inspects
+ * client-supplied metadata, which a renamed or crafted file can lie about.
+ *
+ * Async because reading bytes off a File requires awaiting a Blob slice —
+ * kept separate from the sync checks so callers can fail fast on the cheap
+ * checks before touching file contents.
+ */
+export async function validateImageSignature(file: File): Promise<string | null> {
+  let bytes: Uint8Array;
+  try {
+    bytes = await readSignatureBytes(file);
+  } catch {
+    return "The selected file could not be read.";
+  }
+
+  const format = detectImageFormat(bytes);
+  if (!format) {
+    return "This file isn't a valid JPG, PNG, or WebP image.";
+  }
+  if (!formatMatchesDeclaredType(format, file.type)) {
+    // The file decodes as a real image, but not the type it claimed. Worth
+    // rejecting rather than silently accepting: a type/content mismatch is
+    // a signal of either a broken upload path or a deliberately crafted file.
+    return `This file claims to be ${file.type} but its contents are ${format.toUpperCase()}.`;
+  }
   return null;
 }
 
