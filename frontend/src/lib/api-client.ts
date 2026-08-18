@@ -4,6 +4,8 @@ import type {
   Face,
   FaceMatchResult,
   DetectionMode,
+  GalleryEntry,
+  RecognitionResult,
 } from "./face-types";
 
 const API_BASE =
@@ -110,6 +112,50 @@ export const api = {
     return request<FaceMatchResult>("/compare", {
       method: "POST",
       body: JSON.stringify({ faceA, faceB, threshold }),
+    });
+  },
+
+  /** Enroll an embedding under `name` — only the embedding vector is sent,
+   * never an image (see docs/privacy-retention-policy.md). */
+  async enrollFace(
+    name: string,
+    embedding: Float32Array | number[],
+    modelVersion?: string
+  ): Promise<GalleryEntry | null> {
+    return request<GalleryEntry>("/gallery/enroll", {
+      method: "POST",
+      body: JSON.stringify({
+        name,
+        embedding: Array.from(embedding),
+        modelVersion,
+        userSessionId: getSessionId(),
+      }),
+    });
+  },
+
+  async listGallery(): Promise<{ items: GalleryEntry[]; total: number } | null> {
+    const params = new URLSearchParams({ userSessionId: getSessionId() });
+    return request<{ items: GalleryEntry[]; total: number }>(`/gallery?${params.toString()}`);
+  },
+
+  async deleteGalleryEntry(entryId: number): Promise<{ deleted?: boolean } | null> {
+    const params = new URLSearchParams({ userSessionId: getSessionId() });
+    return request<{ deleted?: boolean }>(`/gallery/${entryId}?${params.toString()}`, {
+      method: "DELETE",
+    });
+  },
+
+  async recognizeFace(
+    embedding: Float32Array | number[],
+    threshold?: number
+  ): Promise<RecognitionResult | null> {
+    return request<RecognitionResult>("/gallery/recognize", {
+      method: "POST",
+      body: JSON.stringify({
+        embedding: Array.from(embedding),
+        userSessionId: getSessionId(),
+        threshold,
+      }),
     });
   },
 };

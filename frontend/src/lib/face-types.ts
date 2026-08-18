@@ -54,6 +54,24 @@ export type AppSettings = {
   compareThreshold: number;
 };
 
+/** An enrolled identity in the recognition gallery (checklist §2, §28) —
+ * only ever carries a name and a sample count, never an image. */
+export type GalleryEntry = {
+  id: number;
+  name: string;
+  sampleCount: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type RecognitionResult = {
+  matched: boolean;
+  name: string | null;
+  similarity: number;
+  galleryEntryId: number | null;
+  threshold: number;
+};
+
 // v1
 
 // v2
