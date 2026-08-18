@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from app.models.detection import DetectionRecord, FaceRecord
 from app.schemas.detection import DetectionCreate
@@ -14,6 +14,7 @@ def create_detection(db: Session, payload: DetectionCreate) -> DetectionRecord:
         average_confidence=payload.averageConfidence,
         image_name=payload.imageName,
         user_session_id=payload.userSessionId,
+        model_version=payload.modelVersion,
     )
     db.add(record)
     for face in payload.faces:
@@ -77,6 +78,24 @@ def clear_all(db: Session, user_session_id: Optional[str] = None) -> int:
     query = db.query(DetectionRecord)
     if user_session_id:
         query = query.filter(DetectionRecord.user_session_id == user_session_id)
+    count = query.count()
+    query.delete(synchronize_session=False)
+    db.commit()
+    return count
+
+
+def purge_expired_detections(db: Session, retention_days: int) -> int:
+    """Delete detection records (and their cascaded faces) older than
+    retention_days. Returns the number of detections deleted.
+
+    A retention_days <= 0 is treated as "retention disabled" and purges
+    nothing — callers should already guard on this, but this function stays
+    safe on its own since a stray 0/negative value must never wipe all data.
+    """
+    if retention_days <= 0:
+        return 0
+    cutoff = datetime.utcnow() - timedelta(days=retention_days)
+    query = db.query(DetectionRecord).filter(DetectionRecord.created_at < cutoff)
     count = query.count()
     query.delete(synchronize_session=False)
     db.commit()

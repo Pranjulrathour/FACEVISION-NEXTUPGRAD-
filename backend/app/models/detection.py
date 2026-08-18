@@ -17,6 +17,7 @@ class DetectionRecord(Base):
     average_confidence = Column(Float, default=0.0)
     image_name = Column(String, nullable=True)
     user_session_id = Column(String, index=True, nullable=True)
+    model_version = Column(String, nullable=True)
 
     faces = relationship(
         "FaceRecord",

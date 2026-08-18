@@ -5,11 +5,36 @@ from collections import defaultdict, deque
 from fastapi import HTTPException, Request, status
 
 _WINDOW_SECONDS = 60
+_SWEEP_INTERVAL_SECONDS = 300
 _hits: dict[str, deque] = defaultdict(deque)
+_last_sweep = time.monotonic()
 
 
 def _client_key(request: Request) -> str:
     return request.client.host if request.client else "unknown"
+
+
+def _sweep_stale_entries(now: float) -> None:
+    """Drop entries whose window has fully expired.
+
+    A client that visits once and never returns leaves a stale deque behind
+    forever, since per-key trimming only runs when that same key is seen
+    again. Left unchecked, `_hits` grows without bound over the process
+    lifetime under normal internet traffic (scanners, one-off visitors).
+    This runs on a coarse interval rather than every request to keep the
+    common-case cost at O(1).
+    """
+    global _last_sweep
+    if now - _last_sweep < _SWEEP_INTERVAL_SECONDS:
+        return
+    _last_sweep = now
+    stale_keys = [
+        key
+        for key, hits in _hits.items()
+        if not hits or now - hits[-1] > _WINDOW_SECONDS
+    ]
+    for key in stale_keys:
+        del _hits[key]
 
 
 def rate_limiter(max_per_minute_env: str, default: int):
@@ -23,8 +48,9 @@ def rate_limiter(max_per_minute_env: str, default: int):
     def _dependency(request: Request) -> None:
         if limit <= 0:
             return
-        key = _client_key(request)
         now = time.monotonic()
+        _sweep_stale_entries(now)
+        key = _client_key(request)
         hits = _hits[key]
         while hits and now - hits[0] > _WINDOW_SECONDS:
             hits.popleft()

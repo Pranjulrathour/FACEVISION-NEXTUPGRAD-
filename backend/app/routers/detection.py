@@ -37,6 +37,7 @@ def _to_response(record) -> DetectionResponse:
         face_count=record.face_count or 0,
         average_confidence=record.average_confidence or 0,
         image_name=record.image_name,
+        model_version=record.model_version,
         faces=faces,
     )
 

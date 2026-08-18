@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import List, Optional, Dict, Any
 
 MAX_FACES_PER_DETECTION = 128
@@ -48,19 +48,20 @@ class DetectionCreate(BaseModel):
     faces: List[FaceCreate] = Field(..., max_length=MAX_FACES_PER_DETECTION)
     imageName: Optional[str] = None
     userSessionId: Optional[str] = None
+    modelVersion: Optional[str] = None
 
 
 class DetectionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True, protected_namespaces=())
+
     id: str
     timestamp: int
     mode: str
     face_count: int
     average_confidence: float
     image_name: Optional[str] = None
+    model_version: Optional[str] = None
     faces: List[FaceResponse] = []
-
-    class Config:
-        from_attributes = True
 
 
 class DetectionListResponse(BaseModel):

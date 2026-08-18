@@ -23,6 +23,7 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
+      - run: npm audit --audit-level=high
 
   backend:
     runs-on: ubuntu-latest
@@ -52,3 +53,5 @@ jobs:
           python-version: "3.11"
       - run: pip install -r requirements.txt
       - run: pytest -q
+      - run: pip install pip-audit==2.7.3
+      - run: pip-audit -r requirements.txt --strict

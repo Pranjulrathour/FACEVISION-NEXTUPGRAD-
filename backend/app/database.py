@@ -1,34 +1,15 @@
 import logging
-import os
 import time
 
 from sqlalchemy import create_engine
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker, declarative_base
-from dotenv import load_dotenv
+
+from app.core.config import get_settings, normalize_database_url
 
 logger = logging.getLogger("facevision")
 
-load_dotenv()
-
-
-def normalize_database_url(url: str) -> str:
-    """Rewrite the legacy "postgres://" scheme to "postgresql://".
-
-    Railway/Heroku-style managed Postgres plugins hand out URLs using the
-    legacy scheme, which SQLAlchemy 1.4+/2.x rejects outright.
-    """
-    if url.startswith("postgres://"):
-        return url.replace("postgres://", "postgresql://", 1)
-    return url
-
-
-DATABASE_URL = normalize_database_url(
-    os.getenv(
-        "DATABASE_URL",
-        "postgresql+psycopg2://facevision:facevision@localhost:5432/facevision",
-    )
-)
+DATABASE_URL = get_settings().database_url
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True, echo=False)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
