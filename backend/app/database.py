@@ -37,6 +37,7 @@ def init_db(max_attempts: int = 5, base_delay_seconds: float = 1.0) -> None:
     """
     from app.models.detection import DetectionRecord, FaceRecord
     from app.models.gallery import FaceGalleryEntry, GalleryFaceSample
+    from app.models.user import User
 
     for attempt in range(1, max_attempts + 1):
         try:

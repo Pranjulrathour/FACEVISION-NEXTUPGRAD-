@@ -81,3 +81,73 @@ def test_gallery_routes_available_under_legacy_prefix_too(client):
     response = client.get("/api/gallery", params={"userSessionId": session_id})
     assert response.status_code == 200
     assert response.headers.get("Deprecation") == "true"
+
+
+def _register(client) -> tuple[str, str]:
+    """Registers a fresh user and returns (auth_header_value, user_id)."""
+    email = f"gallery-auth-{uuid.uuid4().hex[:12]}@example.com"
+    response = client.post(
+        "/api/v1/auth/register", json={"email": email, "password": "correct-password-123"}
+    )
+    body = response.json()
+    return f"Bearer {body['accessToken']}", body["user"]["id"]
+
+
+def test_authenticated_enroll_ignores_client_supplied_session_id(client):
+    """Checklist §16/§24: an authenticated caller's data must be scoped to
+    their real user id, not whatever userSessionId they happen to send --
+    otherwise a logged-in user could plant their enrollment under someone
+    else's guessed session id, or read/delete data by claiming to be a
+    session they don't own."""
+    auth_header, _ = _register(client)
+    attacker_supplied_session = "victim-session-id-guessed"
+
+    enroll_response = client.post(
+        "/api/v1/gallery/enroll",
+        json={"name": "Authenticated Alice", "embedding": _embedding(3.0), "userSessionId": attacker_supplied_session},
+        headers={"Authorization": auth_header},
+    )
+    assert enroll_response.status_code == 200
+
+    # The entry must NOT show up under the anonymous session id the client
+    # tried to claim -- it was scoped to the real user id instead.
+    anon_list = client.get("/api/v1/gallery", params={"userSessionId": attacker_supplied_session})
+    assert anon_list.json()["total"] == 0
+
+    # But it does show up when listing as that same authenticated user.
+    auth_list = client.get("/api/v1/gallery", headers={"Authorization": auth_header})
+    assert auth_list.json()["total"] >= 1
+    assert any(e["name"] == "Authenticated Alice" for e in auth_list.json()["items"])
+
+
+def test_two_authenticated_users_cannot_see_each_others_gallery(client):
+    auth_a, _ = _register(client)
+    auth_b, _ = _register(client)
+
+    client.post(
+        "/api/v1/gallery/enroll",
+        json={"name": "User A's contact", "embedding": _embedding(4.0)},
+        headers={"Authorization": auth_a},
+    )
+
+    list_as_b = client.get("/api/v1/gallery", headers={"Authorization": auth_b})
+    assert list_as_b.json()["total"] == 0
+
+
+def test_authenticated_user_cannot_delete_another_users_entry_by_guessing_id(client):
+    auth_a, _ = _register(client)
+    auth_b, _ = _register(client)
+
+    enroll_response = client.post(
+        "/api/v1/gallery/enroll",
+        json={"name": "User A's contact", "embedding": _embedding(5.0)},
+        headers={"Authorization": auth_a},
+    )
+    entry_id = enroll_response.json()["id"]
+
+    delete_as_b = client.delete(f"/api/v1/gallery/{entry_id}", headers={"Authorization": auth_b})
+    assert delete_as_b.status_code == 404
+
+    # Still there when A checks.
+    list_as_a = client.get("/api/v1/gallery", headers={"Authorization": auth_a})
+    assert any(e["id"] == entry_id for e in list_as_a.json()["items"])

@@ -2,9 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import Optional
 
+from app.core.auth import get_current_user_optional, resolve_scope_id
 from app.core.rate_limit import rate_limiter
 from app.core.security import require_api_key
 from app.database import get_db
+from app.models.user import User
 from app.schemas.gallery import (
     EnrollRequest,
     GalleryEntryResponse,
@@ -34,13 +36,18 @@ def _to_response(entry) -> GalleryEntryResponse:
     response_model=GalleryEntryResponse,
     dependencies=[Depends(require_api_key), Depends(_enroll_rate_limit)],
 )
-def enroll(payload: EnrollRequest, db: Session = Depends(get_db)):
+def enroll(
+    payload: EnrollRequest,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional),
+):
+    scope_id = resolve_scope_id(payload.userSessionId, current_user)
     entry = gallery_service.enroll_face(
         db,
         name=payload.name,
         embedding=payload.embedding,
         model_version=payload.modelVersion,
-        user_session_id=payload.userSessionId,
+        user_session_id=scope_id,
     )
     return _to_response(entry)
 
@@ -49,8 +56,10 @@ def enroll(payload: EnrollRequest, db: Session = Depends(get_db)):
 def list_entries(
     userSessionId: Optional[str] = Query(None, alias="userSessionId"),
     db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional),
 ):
-    items, total = gallery_service.list_gallery(db, user_session_id=userSessionId)
+    scope_id = resolve_scope_id(userSessionId, current_user)
+    items, total = gallery_service.list_gallery(db, user_session_id=scope_id)
     return GalleryListResponse(items=[_to_response(e) for e in items], total=total)
 
 
@@ -59,8 +68,10 @@ def delete_entry(
     entry_id: int,
     userSessionId: Optional[str] = Query(None, alias="userSessionId"),
     db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional),
 ):
-    deleted = gallery_service.delete_gallery_entry(db, entry_id, user_session_id=userSessionId)
+    scope_id = resolve_scope_id(userSessionId, current_user)
+    deleted = gallery_service.delete_gallery_entry(db, entry_id, user_session_id=scope_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Gallery entry not found")
     return {"deleted": True, "id": entry_id}
@@ -71,11 +82,16 @@ def delete_entry(
     response_model=RecognizeResponse,
     dependencies=[Depends(_recognize_rate_limit)],
 )
-def recognize(payload: RecognizeRequest, db: Session = Depends(get_db)):
+def recognize(
+    payload: RecognizeRequest,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional),
+):
+    scope_id = resolve_scope_id(payload.userSessionId, current_user)
     result = gallery_service.recognize_face(
         db,
         embedding=payload.embedding,
-        user_session_id=payload.userSessionId,
+        user_session_id=scope_id,
         threshold=payload.threshold,
     )
     return RecognizeResponse(

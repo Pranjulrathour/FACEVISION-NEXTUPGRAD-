@@ -47,6 +47,15 @@ class Settings(BaseSettings):
     # don't suddenly start deleting data just by upgrading.
     retention_days: Optional[int] = None
 
+    # JWT auth (§15, §16). Documented here; read live via os.getenv() in
+    # core/auth.py for the same monkeypatch-testability reason as API_KEY.
+    # Unset in production is a real misconfiguration (see core/auth.py's
+    # runtime warning), but auto-generating an ephemeral secret keeps local
+    # dev working without a setup step -- tokens just won't survive a
+    # backend restart, which is an acceptable dev-only tradeoff.
+    jwt_secret: Optional[str] = None
+    jwt_expire_minutes: int = 60 * 24 * 7  # 7 days
+
     @property
     def cors_origins(self) -> List[str]:
         return [origin.strip() for origin in self.cors_origins_raw.split(",") if origin.strip()]
