@@ -49,18 +49,19 @@ function sampleDetection(id) {
 }
 
 export default function () {
-  const health = http.get(`${BASE_URL}/api/health`);
+  // /api/v1 is canonical (§14); /api/... still works but is deprecated.
+  const health = http.get(`${BASE_URL}/api/v1/health`);
   check(health, { "health is 200": (r) => r.status === 200 });
 
   const id = `loadtest-${__VU}-${__ITER}-${Date.now()}`;
-  const createRes = http.post(`${BASE_URL}/api/detections`, sampleDetection(id), {
+  const createRes = http.post(`${BASE_URL}/api/v1/detections`, sampleDetection(id), {
     headers: { "Content-Type": "application/json" },
   });
   check(createRes, {
     "detection create is 200 or 429": (r) => r.status === 200 || r.status === 429,
   });
 
-  const statsRes = http.get(`${BASE_URL}/api/stats`);
+  const statsRes = http.get(`${BASE_URL}/api/v1/stats`);
   check(statsRes, { "stats is 200": (r) => r.status === 200 });
 
   sleep(1);

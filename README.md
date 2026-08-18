@@ -106,17 +106,21 @@ npm run dev
 
 ## Backend API
 
-| Method | Route | Description |
+Routes are versioned under `/api/v1` (canonical). The unversioned `/api/...` paths still work
+identically but return a `Deprecation: true` header + `Link` pointer to the `/v1` replacement —
+kept for backward compatibility, not recommended for new integrations.
+
+| Method | Route (v1) | Description |
 |---|---|---|
-| `GET` | `/api/health` | Liveness check |
-| `POST` | `/api/detections` | Store a detection (faces + metadata) |
-| `GET` | `/api/detections?limit=&offset=&mode=` | Paginated list |
-| `GET` | `/api/detections/{id}` | One record with faces |
-| `DELETE` | `/api/detections/{id}` | Delete one record |
-| `GET` | `/api/history` | Alias + filtering |
-| `DELETE` | `/api/history` | Clear all history |
-| `GET` | `/api/stats` | KPI summary + 7-day trend |
-| `POST` | `/api/compare` | Landmark cosine similarity match |
+| `GET` | `/api/v1/health` | Liveness check |
+| `POST` | `/api/v1/detections` | Store a detection (faces + metadata) |
+| `GET` | `/api/v1/detections?limit=&offset=&mode=` | Paginated list |
+| `GET` | `/api/v1/detections/{id}` | One record with faces |
+| `DELETE` | `/api/v1/detections/{id}` | Delete one record |
+| `GET` | `/api/v1/history` | Alias + filtering |
+| `DELETE` | `/api/v1/history` | Clear all history |
+| `GET` | `/api/v1/stats` | KPI summary + 7-day trend |
+| `POST` | `/api/v1/compare` | Landmark cosine similarity match |
 
 Interactive Swagger UI: http://localhost:8000/docs
 
@@ -124,9 +128,9 @@ Interactive Swagger UI: http://localhost:8000/docs
 
 | Env var | Default | Effect |
 |---|---|---|
-| `API_KEY` | unset (disabled) | When set, `X-API-Key` is required on `POST /api/detections`, `DELETE /api/detections/{id}`, and `DELETE /api/history` |
-| `DETECTIONS_RATE_LIMIT_PER_MIN` | `30` | Per-IP limit on `POST /api/detections` |
-| `COMPARE_RATE_LIMIT_PER_MIN` | `30` | Per-IP limit on `POST /api/compare` |
+| `API_KEY` | unset (disabled) | When set, `X-API-Key` is required on `POST /api/v1/detections`, `DELETE /api/v1/detections/{id}`, and `DELETE /api/v1/history` (and their deprecated `/api/...` aliases) |
+| `DETECTIONS_RATE_LIMIT_PER_MIN` | `30` | Per-IP limit on `POST /api/v1/detections` |
+| `COMPARE_RATE_LIMIT_PER_MIN` | `30` | Per-IP limit on `POST /api/v1/compare` |
 | `RETENTION_DAYS` | unset (disabled) | If set, `python backend/scripts/purge_old_detections.py` deletes detections older than this many days. See [docs/privacy-retention-policy.md](docs/privacy-retention-policy.md). |
 
 Set `API_KEY` before any real deployment — it is intentionally a no-op in local dev so the anonymous-write flow keeps working out of the box. All backend configuration is centralized in [backend/app/core/config.py](backend/app/core/config.py).
@@ -156,7 +160,7 @@ k6 run deployment/scripts/load-test.js
 k6 run -e BASE_URL=http://localhost:8000 deployment/scripts/load-test.js
 ```
 
-Ramps to 20 virtual users hitting `/api/health`, `/api/detections`, and `/api/stats`; asserts p95 latency < 500ms and a <1% hard-failure rate (429s from the rate limiter are treated as expected, not failures).
+Ramps to 20 virtual users hitting `/api/v1/health`, `/api/v1/detections`, and `/api/v1/stats`; asserts p95 latency < 500ms and a <1% hard-failure rate (429s from the rate limiter are treated as expected, not failures).
 
 ## Known Limitations
 

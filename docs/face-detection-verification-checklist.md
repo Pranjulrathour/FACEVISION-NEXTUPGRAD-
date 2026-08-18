@@ -11,6 +11,16 @@ Each section below maps the original requirement onto real files in this repo an
 current status: `[x]` done, `[~]` partial, `[ ]` gap. This is a living document — update it
 as the system evolves, don't let it go stale.
 
+## 5-Phase Implementation Tracker
+
+| Phase | Sections | Status |
+|---|---|---|
+| **1 — Foundation** | §6 §7 §9 §12 §14 §20 | ✅ Done — magic-byte validation, pixel-level blur/lighting checks, inference timeout, `/api/v1` versioning, centralized config |
+| 2 — Recognition | §2 §5 §10 §28 | ⏳ Not started — SFace embeddings, enroll+recognize gallery, `BiometricProfiles` table |
+| 3 — Security | §11 §15 §16 §24 | ⏳ Not started — MiniFASNet anti-spoofing, JWT auth, security test suite |
+| 4 — Measurement | §4 §13 §22 §23 §25 §33 §36 | ⏳ Not started — evaluation harness (needs a dataset you supply), load + memory profiling |
+| 5 — Ops/Governance | §18 §26 §27 §37 §38 §40–43 | ⏳ Not started — `/metrics` + percentiles, Redis-backed rate limiter, caching, PR/governance workflow |
+
 ---
 
 ## 1. Objective
@@ -159,9 +169,12 @@ algorithm. If a real embedding-based verifier is added later (see
   [schemas/stats.py](../backend/app/schemas/stats.py)) validate structure of every request —
   `CompareRequest` uses typed `ComparableFace` models (fixed from raw `dict` — see git history),
   `DetectionCreate.faces` is capped at 128 entries to block oversized payloads
-- [ ] No explicit magic-byte/file-signature validation beyond browser `File.type` — a renamed
-  file could bypass MIME checks before hitting the ONNX decoder. Low risk here since decoding
-  happens client-side and a malformed image just fails to decode, but worth knowing
+- [x] Magic-byte/file-signature validation added: [image-signature.ts](../frontend/src/lib/image-signature.ts)
+  `detectImageFormat()` reads the leading bytes of the file (JPEG/PNG/WebP signatures) and
+  `formatMatchesDeclaredType()` flags a mismatch between declared `Content-Type` and actual
+  content — wired into `face-vision.tsx`'s `selectFile()` via `validateImageSignature()`, after
+  the cheap MIME/size check and before the file is ever decoded. Covered by 11 unit tests
+  including a renamed-executable case (MZ header) and a mismatched-RIFF case.
 - [x] Decompression-bomb guard added: [image.ts](../frontend/src/lib/image.ts)
   `validateDecodedImageDimensions()` rejects decoded images over 40 megapixels regardless of
   file size, wired into `face-vision.tsx`'s `detectImage()` right after decode
@@ -204,22 +217,25 @@ type Face = {
 
 ## 9. Face Quality Assessment
 
-**Done (heuristic-based).** [face-quality.ts](../frontend/src/lib/face-quality.ts) exports
-`assessFaceQuality()`/`assessFaces()` returning structured codes: `OK`, `NO_FACE`,
-`MULTIPLE_FACES`, `FACE_TOO_SMALL`, `LOW_CONFIDENCE`, `EXCESSIVE_POSE`, `INVALID_IMAGE` — all
-configurable via options (`minRelativeFaceSize`, `minConfidence`, `maxPoseAsymmetryRatio`,
-`rejectMultipleFaces`), covered by 10 unit tests.
+**Done, including pixel-level checks.** [face-quality.ts](../frontend/src/lib/face-quality.ts)
+exports `assessFaceQuality()`/`assessFaces()` returning structured codes: `OK`, `NO_FACE`,
+`MULTIPLE_FACES`, `FACE_TOO_SMALL`, `LOW_CONFIDENCE`, `EXCESSIVE_POSE`, `IMAGE_TOO_BLURRY`,
+`POOR_LIGHTING`, `INVALID_IMAGE` — all configurable via options, covered by 17 unit tests.
 
 - [x] Structured failure codes (not a bare boolean)
-- [x] Face-size-relative-to-image and pose-asymmetry (landmark geometry) checks
-- [ ] **Blur/brightness/contrast/occlusion scoring is not implemented** — these require actual
-  pixel sampling (variance-of-Laplacian for blur, mean luminance for brightness), which this
-  module doesn't do; it's a pure geometry/confidence module, not a pixel-analysis one. Wiring
-  pixel-based checks would need access to the cropped face `ImageData`, not yet threaded
-  through from `face-vision.tsx`'s canvas.
-- Not yet wired into the main detection flow's UI — the module exists and is tested, but
-  `face-vision.tsx` doesn't currently call it to filter/label results in the UI. Available for
-  a future "is this face usable" gate.
+- [x] Face-size-relative-to-image and pose-asymmetry (landmark geometry) checks — always run
+- [x] Blur (variance-of-Laplacian, [pixel-analysis.ts](../frontend/src/lib/pixel-analysis.ts))
+  and lighting/contrast (mean/stdDev luminance) checks — run when a cropped-face `ImageData` is
+  supplied. Cropping itself lives in [face-crop.ts](../frontend/src/lib/face-crop.ts), separated
+  from the pure math in `pixel-analysis.ts` specifically so the math stays unit-testable without
+  a real canvas (the Node test environment has no canvas implementation).
+- [x] Wired into the actual detection flow: [face-pipeline.ts](../frontend/src/lib/face-pipeline.ts)'s
+  `runDetectionPipeline()` crops and runs pixel checks when `enablePixelQualityChecks: true` is
+  passed — enabled for upload-mode detections, deliberately **not** enabled for camera-mode's
+  per-frame loop (cropping costs an extra canvas draw + two full pixel-array passes, which is
+  fine once per upload but not at 30-60fps).
+- [ ] Occlusion detection is still not implemented — would need either a landmark-visibility
+  signal the current model doesn't output, or a dedicated occlusion model.
 
 ---
 
@@ -266,10 +282,11 @@ could be trusted for anything security-sensitive.
   UI, not reloaded per detection ([face-vision.tsx](../frontend/src/components/face-vision.tsx))
 - [x] ONNX Runtime session reused across detections in a session
 - [x] WebGPU-first with automatic WASM fallback — hardware acceleration used when available
-- [ ] No explicit cancellation/timeout wired into a single inference call (camera mode relies
-  on `requestAnimationFrame` cadence rather than an inference-level timeout) — acceptable for
-  a client-side, user-initiated action; would matter more for a server-side inference path,
-  which this app doesn't have
+- [x] Inference timeout added: [face-pipeline.ts](../frontend/src/lib/face-pipeline.ts)'s
+  `runDetectionPipeline()` wraps `detector.detect()` in a race against a configurable timeout
+  (default 8000ms), throwing `FacePipelineError("INFERENCE_TIMEOUT", ...)` if inference hangs
+  — a stuck WebGPU context or corrupt frame now surfaces as an error instead of leaving the UI
+  stuck in "processing" forever. Covered by 2 unit tests (times out; doesn't time out when fast).
 
 ---
 
@@ -288,20 +305,25 @@ don't apply — the equivalent browser-side risks are:
 
 ## 14. API Design
 
-Actual routes (all under `/api`, see [backend/app/main.py](../backend/app/main.py)):
+Routes are versioned under `/api/v1` (canonical); the same router objects are also mounted at
+the old unversioned `/api/...` prefix for backward compatibility (see
+[backend/app/main.py](../backend/app/main.py)):
 
-| Method | Path | Purpose |
+| Method | Path (v1) | Purpose |
 |---|---|---|
-| GET | `/api/health` | liveness |
-| POST | `/api/detections` | store a detection |
-| GET | `/api/detections` | paginated list |
-| GET/DELETE | `/api/detections/{id}` | fetch/delete one |
-| GET/DELETE | `/api/history` | history alias + clear |
-| GET | `/api/stats` | aggregated KPIs |
-| POST | `/api/compare` | landmark similarity |
+| GET | `/api/v1/health` | liveness |
+| POST | `/api/v1/detections` | store a detection |
+| GET | `/api/v1/detections` | paginated list |
+| GET/DELETE | `/api/v1/detections/{id}` | fetch/delete one |
+| GET/DELETE | `/api/v1/history` | history alias + clear |
+| GET | `/api/v1/stats` | aggregated KPIs |
+| POST | `/api/v1/compare` | landmark similarity |
 
-- [x] Clean, versioned-by-convention (not literally `/v1/` yet — worth adding if you expect
-  breaking changes; low priority for a single-consumer app)
+- [x] Versioned under `/api/v1`; the legacy unversioned path for each route still works but a
+  `deprecate_unversioned_routes` middleware adds a `Deprecation: true` header + a `Link:
+  <.../api/v1/...>; rel="successor-version"` pointer, and logs a server-side warning on every
+  legacy call — so usage is visible without needing client telemetry. Covered by 5 tests
+  (v1 works, legacy works, legacy carries the headers, v1 doesn't, both share the same data).
 - [x] Response shapes are typed Pydantic models, not raw dicts
 - [x] Internal model details (ONNX session, SQLAlchemy internals) never leak through responses
 
