@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.core.config import get_settings
-from app.routers import detection, history, stats, face_compare, health
+from app.routers import detection, history, stats, face_compare, gallery, health
 from app.database import init_db
 
 logger = logging.getLogger("facevision")
@@ -80,6 +80,7 @@ for prefix in (API_V1_PREFIX, LEGACY_API_PREFIX):
     app.include_router(history.router, prefix=f"{prefix}/history", tags=["history"])
     app.include_router(stats.router, prefix=f"{prefix}/stats", tags=["stats"])
     app.include_router(face_compare.router, prefix=f"{prefix}/compare", tags=["compare"])
+    app.include_router(gallery.router, prefix=f"{prefix}/gallery", tags=["gallery"])
 
 
 @app.exception_handler(Exception)
