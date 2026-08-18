@@ -57,27 +57,69 @@ files/services — not a single tightly-coupled script. Good starting position.
 
 ## 3. Architecture (as-built)
 
-```
-Browser
-  Image / Camera
-    → YuNetDetector (ONNX Runtime Web, WebGPU→WASM)   [frontend/src/lib/yunet.ts]
-    → Canvas overlay (boxes, landmarks)                [frontend/src/components/face-vision.tsx]
-    → optional: api-client.ts → POST /api/detections    [frontend/src/lib/api-client.ts]
+The checklist's reference diagram assumes a server-side pipeline (client uploads an image to
+an API Gateway, which runs validation/preprocessing/detection/matching server-side).
+FaceVision deliberately inverts this: the entire pipeline runs **inside the browser**, so no
+image is ever uploaded and there is no gateway to route through. The stage *shape* is mirrored
+anyway — same named stages, same order — via a dedicated orchestrator module, so the pipeline
+structure is enforced in code, not just claimed in docs.
 
-FastAPI backend (optional, opt-in persistence)
+```
+Browser ("Client" — no "API Gateway" stage: there is no network hop for detection)
+  Image (upload) or Camera frame
+    │
+    ▼
+  validateImage()                    — Input Validation (file MIME/size, pre-decode)
+    [frontend/src/lib/image.ts]
+    │
+    ▼
+  runDetectionPipeline()             — orchestrates every stage below
+    [frontend/src/lib/face-pipeline.ts]
+    │
+    ├─▶ validateDecodedImageDimensions()   — Security Checks (decompression-bomb guard)
+    │     [frontend/src/lib/image.ts]
+    │
+    ├─▶ FaceDetector.detect()              — Image Preprocessor + Face Detection Model
+    │     [frontend/src/lib/yunet.ts, face-detector.ts]     (letterbox/normalize is internal
+    │                                                         to detect(), tightly coupled to
+    │                                                         the model's tensor shape)
+    │
+    ├─▶ assessFaces()                      — Quality Assessment (+ implicit Face Crop: the
+    │     [frontend/src/lib/face-quality.ts]  returned box *is* the crop region)
+    │
+    └─▶ LivenessHeuristic.observe()         — Optional Liveness (camera mode only, heuristic,
+          [frontend/src/lib/liveness.ts]       not certified — see §11)
+    │
+    ▼
+  face-vision.tsx                    — Business Layer (decides what the UI does with the
+    [frontend/src/components/...]       result) + Response (render/persist)
+    │
+    ├─▶ matchFaces()                  — Optional Embedding + Matching Service, on demand
+    │     [frontend/src/lib/face-pipeline.ts → face-math.ts]  (user-triggered Compare action,
+    │                                                            not run on every detection)
+    │
+    └─▶ optional: api-client.ts → POST /api/detections    [frontend/src/lib/api-client.ts]
+
+FastAPI backend (optional, opt-in persistence — NOT part of the detection pipeline above)
   routers/detection.py  → services/detection_service.py → models/detection.py → Postgres
-  routers/face_compare.py → services/face_compare_service.py (landmark cosine similarity)
+  routers/face_compare.py → services/face_compare_service.py (mirrors the same landmark
+                                                                cosine-similarity matching)
   routers/stats.py      → services/stats_service.py
   routers/history.py
   routers/health.py
 ```
 
 Detection itself never leaves the browser. The backend is a bolt-on for history/stats/compare
-persistence and can be swapped or removed without touching the detector.
+persistence and can be swapped or removed without touching the pipeline.
 
 - [x] Presentation (routers) → Application (services) → Infrastructure (models/database) layering exists in `backend/app`
 - [x] AI inference (`yunet.ts`) is isolated from UI state management (`face-vision.tsx`) and from the backend entirely
 - [x] `FaceDetector` TypeScript interface exists ([face-detector.ts](../frontend/src/lib/face-detector.ts)); `YuNetDetector implements FaceDetector` — see §5
+- [x] The checklist's pipeline-stage structure is mirrored client-side via
+  [face-pipeline.ts](../frontend/src/lib/face-pipeline.ts)'s `runDetectionPipeline()` (Security
+  Checks → Preprocessor → Detection → Quality → Liveness) and `matchFaces()` (Embedding →
+  Matching), both wired into `face-vision.tsx` for upload mode, camera mode, and the Compare
+  panel — not just documented as an analogy. Covered by 9 unit tests.
 
 ---
 
