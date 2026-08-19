@@ -19,7 +19,7 @@ as the system evolves, don't let it go stale.
 | **2 — Recognition** | §2 §5 §10 §28 | ✅ Done — real SFace embeddings + face alignment, enroll/recognize gallery, `BiometricProfiles`-style tables activated |
 | **3 — Security** | §11 §15 §16 §24 | ✅ Done — real MiniFASNet ONNX liveness check, JWT auth + bcrypt with cryptographically-bound gallery scoping, dedicated adversarial security test suite. Frontend auth UI not yet built (tracked gap) |
 | **4 — Measurement** | §4 §13 §22 §23 §25 §33 §36 | ✅ Done — real LFW-based accuracy evaluation (96.9%, ROC AUC 0.994), memory soak test (no leak found), live load test (found and fixed a real production schema-drift bug). Bias/fairness (§25/§33) remains honestly unmeasured — LFW has no demographic labels |
-| 5 — Ops/Governance | §18 §26 §27 §37 §38 §40–43 | ⏳ Not started — `/metrics` + percentiles, Redis-backed rate limiter, caching, PR/governance workflow |
+| **5 — Ops/Governance** | §18 §26 §27 §37 §38 §40–43 | ✅ Done — `GET /metrics` with p50/p95/p99 + error rates per route, Redis-backed rate limiter (opt-in via `REDIS_URL`, in-memory fallback), CONTRIBUTING.md + PR template. No GitHub branch protection enabled (deliberate — solo project, direct-push workflow kept) |
 
 ---
 
@@ -429,9 +429,16 @@ the old unversioned `/api/...` prefix for backward compatibility (see
 
 ## 18. Observability
 
-- [~] Request timing logged per-request, but no aggregated dashboards, no P50/P95/P99
-  tracking, no alerting — this is genuinely absent, not just "someone else's job." A future
-  iteration could ship these via Railway's metrics or a lightweight `/metrics` endpoint.
+- [x] **`GET /api/v1/metrics` (Phase 5)** — real p50/p95/p99 latency and error-rate tracking
+  per route, in-process ([app/core/metrics.py](../backend/app/core/metrics.py)), no external
+  service or signup needed. Grouped by path *template* (e.g.
+  `GET /api/v1/detections/{detection_id}`), not literal path, so distinct IDs don't fragment
+  the stats — reconstructed from `request.scope["path_params"]` rather than the matched
+  route's own `.path`, since this FastAPI version's lazy router-inclusion leaves that
+  attribute holding the sub-router's un-prefixed template, not the full mounted path.
+- [~] Still no aggregated dashboards or alerting — `/metrics` is a real number source now, but
+  nothing scrapes/graphs/pages on it yet. A future iteration could point Prometheus/Grafana or
+  Railway's own metrics at it.
 - [x] k6 load-test script exists ([deployment/scripts/load-test.js](../deployment/scripts/load-test.js))
   and asserts p95 < 500ms — a manual substitute for continuous monitoring, not a replacement
 
@@ -496,9 +503,11 @@ fairness measurement (§25/§33) remains genuinely unmeasured — see the LFW ca
 
 - [x] Backend is stateless (no local session state); Postgres is the only shared state
 - [x] Docker healthchecks + Railway `railway.toml` restart policies configured
-- [ ] Rate limiter state is per-process/in-memory — the one piece of state that **wouldn't**
-  survive horizontal scaling to multiple backend replicas without moving to a shared store
-  (Redis) — already flagged in README
+- [x] **Rate limiter is now Redis-capable (Phase 5)** — set `REDIS_URL` and every replica
+  shares one budget per client/route instead of each enforcing its own independent one; unset
+  (today's default), behavior is unchanged from before. See
+  [ADR 0005](adr/0005-redis-backed-rate-limiter-with-fallback.md) for why this is opt-in
+  rather than a hard requirement, and how it degrades if Redis is configured but unreachable.
 
 ---
 
@@ -621,10 +630,13 @@ becomes mandatory, not optional.
 
 ## 37. Code Review Requirements
 
-Solo/small-team project — no formal PR review gate configured. If a second contributor joins,
-adopt: architecture, security, memory, async correctness, exception handling, logging, input
-validation, inference efficiency, test coverage, config, scalability, privacy — the original
-checklist's list is directly reusable as-is.
+Solo project, no formal PR review *gate* configured (deliberately — see §38). But the
+checklist itself is now written down rather than left as tribal knowledge:
+[CONTRIBUTING.md](../CONTRIBUTING.md)'s "Review checklist" section (architecture, security,
+privacy, memory/async correctness, exception handling, logging, test coverage, config,
+scalability, docs) is the original checklist's list, adapted to this repo's actual structure —
+directly usable the moment a second contributor joins, without reverse-engineering conventions
+from git history first.
 
 ---
 
@@ -636,9 +648,16 @@ checklist's list is directly reusable as-is.
   package
 - [x] No secrets committed (verified: `.env` files gitignored, `.env.example` templates
   committed instead)
-- [x] CI (`.github/workflows/ci.yml`) runs lint + typecheck + test + build on every push/PR
-- [ ] No formal PR-based workflow yet (direct commits to `main`) — fine for solo development,
-  worth changing if collaborators join
+- [x] CI (`.github/workflows/ci.yml`) runs lint + typecheck + test + build on every push/PR —
+  and, as of Phase 5, actually passes (see git history around commits `8672ebc`..`a1cfe8b` for
+  the CI-had-been-broken-since-day-one saga and its fixes)
+- [x] **PR template added (Phase 5)** — [.github/PULL_REQUEST_TEMPLATE.md](../.github/PULL_REQUEST_TEMPLATE.md)
+  mirrors the CONTRIBUTING.md review checklist
+- [ ] **Still no enforced PR gate / branch protection** — direct commits to `main` remain
+  possible and are still how this project is actually developed. This is a deliberate choice
+  (solo project, confirmed explicitly when this phase was scoped), not an oversight — flip on
+  branch protection in GitHub's repo settings if/when a second contributor joins and direct-push
+  access needs to be restricted.
 
 ---
 
@@ -658,27 +677,39 @@ checklist's list is directly reusable as-is.
 ## 40. Production Readiness Checklist (honest current state)
 
 - [x] Functional requirements documented (README + this file)
-- [ ] Model benchmarked against alternatives
-- [ ] Accuracy formally measured (precision/recall/FAR/FRR)
-- [~] Security testing: schema validation + payload caps + CI CVE scanning done; no
-  adversarial/spoofing test suite
-- [x] Load testing tooling exists; not yet run against production for a real baseline
-- [ ] Memory testing (browser long-session soak test) not done
-- [x] API authenticated (opt-in `API_KEY`)
-- [x] Rate limiting exists
+- [ ] Model benchmarked against alternatives (still the acknowledged gap in §4 — YuNet was
+  chosen, not comparison-tested against other detectors)
+- [x] **Accuracy formally measured (Phase 4)** — SFace verification: 96.9% accuracy at the
+  app's threshold, 0% FAR, 6.2% FRR, ROC AUC 0.994 against 2200 real LFW pairs. Detection-only
+  precision/recall against a labeled detection dataset is still not separately measured.
+- [x] **Adversarial security test suite exists (Phase 3)** — `test_security_adversarial.py`:
+  payload/boundary caps, injection-string handling, unauthorized access, enumeration, error-leak
+  checks — on top of schema validation, payload caps, and CI CVE scanning.
+- [x] **Load testing run against the live deployment (Phase 4)** — and found/fixed a real
+  production incident in the process (see §22-25). A clean authenticated-write latency baseline
+  is still an open follow-up.
+- [x] **Memory testing done (Phase 4)** — 170-cycle soak test against the live deployment; no
+  leak found (§13).
+- [x] API authenticated (opt-in `API_KEY`, plus real JWT user accounts as of Phase 3)
+- [x] Rate limiting exists, now Redis-capable for multi-replica deployments (Phase 5, §26)
 - [x] Input validation exists (frontend + backend), including a decompression-bomb guard
 - [x] Biometric retention policy documented and enforceable (`RETENTION_DAYS` + purge script)
 - [x] Sensitive data never logged (verified)
 - [x] Model versioning stamped on records (`model_version` column)
-- [~] Basic observability (request logs); no dashboards/alerts
-- [x] Unit tests exist (frontend + backend)
+- [x] **Real observability added (Phase 5)** — `GET /metrics` with per-route p50/p95/p99 +
+  error rates (§18); still no external dashboards/alerting wired to it.
+- [x] Unit tests exist (frontend + backend) — 116 frontend, 122 backend as of Phase 5
 - [x] Integration tests exist for the full detect→store→retrieve→stats→compare→clear pipeline
 - [~] Some failure scenarios tested (invalid compare payload, zero-size box, rate limit,
-  DB-not-ready retry, decompression bomb, extreme pose); not exhaustive
-- [x] Documentation complete for current scope, including model card, privacy policy, and ADR
-- [ ] No formal code review process (solo project)
-- [x] Automated dependency/CVE scanning wired into CI (npm audit + pip-audit); no license-review
-  process beyond that
+  DB-not-ready retry, decompression bomb, extreme pose, schema-drift self-healing); not exhaustive
+- [x] Documentation complete for current scope, including model cards, privacy policy, and ADRs
+  0001-0005
+- [~] **Review checklist now written down (Phase 5)** — CONTRIBUTING.md + PR template exist;
+  still no *enforced* gate (no branch protection) — a deliberate choice for this solo project,
+  not an oversight (§37/§38)
+- [x] Automated dependency/CVE scanning wired into CI (npm audit + pip-audit) — and, as of
+  Phase 5, CI actually runs successfully (it had silently failed on every run since the repo's
+  first commit until then); no license-review process beyond CVE scanning
 - [~] Rollback strategy: git history + Railway's deployment history serve this informally; no
   documented rollback runbook
 
@@ -705,8 +736,8 @@ the whole git history.*
 | 2 — Engineering Foundation (structure, abstraction, config, validation, error handling, logging, API) | [x] structure/validation/error-handling/logging/API/abstraction-interface/centralized-config all done (§5, §20) |
 | 3 — Quality (face quality, threshold calibration, multi-face, edge cases) | [x] thresholds configurable; structured quality-assessment module with codes exists (§9); [ ] pixel-based blur/lighting checks still not implemented |
 | 4 — Security (auth, rate limiting, input security, privacy) | [x] done — API key, rate limiting, input validation, no raw-image storage |
-| 5 — Performance (benchmark, load test, memory profiling) | [~] load-test script exists, not run against prod; no memory profiling done |
-| 6 — Production (monitoring, alerting, deployment, rollback, docs, security review) | [~] deployed to Railway with healthchecks; no monitoring/alerting; docs exist; no formal security review sign-off |
+| 5 — Performance (benchmark, load test, memory profiling) | [x] real LFW accuracy benchmark, load test run against the live deployment (found/fixed a real bug), memory soak test done — all Phase 4 |
+| 6 — Production (monitoring, alerting, deployment, rollback, docs, security review) | [~] deployed to Railway with healthchecks + `/metrics`; still no external dashboards/alerting/paging; docs exist (model cards, ADRs 0001-0005, CONTRIBUTING.md); no formal security review sign-off |
 
 ---
 
@@ -714,18 +745,23 @@ the whole git history.*
 
 1. **Why YuNet?** Lightweight, purpose-built, ONNX-portable, runs client-side without a GPU server.
 2. **What alternatives were benchmarked?** None formally — this is the acknowledged gap in §4.
-3. **Measured false-positive rate?** Not measured.
-4. **Measured false-negative rate?** Not measured.
+3. **Measured false-positive rate?** For SFace *verification* (Phase 4, LFW): 0% false-accept
+   rate at the app's threshold. For raw YuNet *detection* specifically: still not measured.
+4. **Measured false-negative rate?** For SFace *verification* (Phase 4, LFW): 6.2% false-reject
+   rate at the app's threshold. For raw YuNet *detection* specifically: still not measured.
 5. **Multiple faces?** Supported and rendered; no business rule rejects multi-face detections.
 6. **No face?** Returns an empty result; UI shows "no face detected," no crash.
 7. **100MB image?** Frontend caps uploads at 12MB with a validation error before decode.
 8. **Decompression-bomb protection?** Now guarded — decoded dimensions are checked against a
    40-megapixel cap regardless of file size (§6, §7).
-9. **Memory per request?** Not profiled; detection is client-side, so "per request" doesn't map
-   to backend memory the way it would for a server-side inference API.
+9. **Memory per request?** Not profiled per-request; detection is client-side, so "per request"
+   doesn't map to backend memory the way it would for a server-side inference API. A 170-cycle
+   soak test (Phase 4, §13) found ~340 bytes/cycle of heap growth — noise-level, not a leak.
 10. **Model loaded per request?** No — loaded once via `prepareDetector()`, reused.
-11. **Scale to 100 instances?** Backend is stateless and would scale horizontally; the
-    in-memory rate limiter is the one component that wouldn't coordinate across instances (§26).
+11. **Scale to 100 instances?** Backend is stateless and would scale horizontally. The rate
+    limiter no longer blocks this in principle — set `REDIS_URL` and every replica shares one
+    budget (Phase 5, §26, [ADR 0005](adr/0005-redis-backed-rate-limiter-with-fallback.md)) —
+    though it hasn't actually been run at that scale to confirm.
 12. **AI model crashes?** Client-side: caught, falls back to WASM if WebGPU fails; a hard ONNX
     failure surfaces as a UI error state, doesn't crash the tab.
 13. **Inference takes 30s?** No explicit inference-level timeout; realistically a 640×640
@@ -740,7 +776,9 @@ the whole git history.*
     [docs/privacy-retention-policy.md](privacy-retention-policy.md). Still opt-in/unset by
     default, so the honest default answer is "kept until manually cleared" unless an operator
     configures it.
-18. **Embeddings stored?** No — landmark coordinates only, and only if the backend is used.
+18. **Embeddings stored?** Only if a user explicitly enrolls a face in the Gallery (Phase 2) —
+    a 128-d SFace embedding, not landmark coordinates alone. See
+    [docs/privacy-retention-policy.md](privacy-retention-policy.md) for what's stored and why.
 19. **Who can access them?** Anyone with the `API_KEY` (if set) can write; anonymous
     (unauthenticated) reads are still open beyond the client-supplied `userSessionId` filter. For
     an authenticated caller, access is now cryptographically bound — `resolve_scope_id()`

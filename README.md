@@ -130,6 +130,7 @@ kept for backward compatibility, not recommended for new integrations.
 | `POST` | `/api/v1/auth/register` | Create an account (email + password), returns a JWT |
 | `POST` | `/api/v1/auth/login` | Exchange email + password for a JWT |
 | `GET` | `/api/v1/auth/me` | Current authenticated user (requires `Authorization: Bearer <token>`) |
+| `GET` | `/api/v1/metrics` | Per-route request counts, error rates, p50/p95/p99 latency (§18) |
 
 Interactive Swagger UI: http://localhost:8000/docs
 
@@ -151,6 +152,7 @@ login/register form; use the endpoints directly (e.g. via Swagger UI or curl) to
 | `JWT_SECRET` | unset (ephemeral, process-lifetime fallback) | HS256 signing key for auth tokens. **Must be set to a real secret in production** — the fallback works for local dev but invalidates all issued tokens on every restart and isn't safe to run multi-instance |
 | `JWT_EXPIRE_MINUTES` | `10080` (7 days) | Access token lifetime |
 | `RETENTION_DAYS` | unset (disabled) | If set, `python backend/scripts/purge_old_detections.py` deletes detections older than this many days. See [docs/privacy-retention-policy.md](docs/privacy-retention-policy.md). |
+| `REDIS_URL` | unset (in-memory rate limiting) | If set, rate limits are enforced against Redis instead of per-process memory, so every replica shares one budget instead of each enforcing its own. Falls back to in-memory automatically if Redis is unreachable. See [ADR 0005](docs/adr/0005-redis-backed-rate-limiter-with-fallback.md). |
 
 Set `API_KEY` and `JWT_SECRET` before any real deployment — `API_KEY` is intentionally a no-op in local dev so the anonymous-write flow keeps working out of the box, and `JWT_SECRET` falls back to a random per-process value so auth still works locally without configuration, but that fallback is not appropriate for anything beyond local dev. All backend configuration is centralized in [backend/app/core/config.py](backend/app/core/config.py).
 
@@ -189,7 +191,7 @@ Ramps to 20 virtual users hitting `/api/v1/health`, `/api/v1/detections`, and `/
 - **No frontend login/register UI yet.** The backend fully supports auth via direct API calls; `face-vision.tsx` has no form for it. Tracked gap, not a silent omission.
 - **No self-service "delete my account" endpoint.** Account deletion currently requires direct database access by an operator.
 - **`JWT_SECRET` falls back to an ephemeral per-process value if unset** — fine for local dev, but invalidates all issued tokens on every restart and is unsafe for a multi-instance deployment. Set it explicitly before deploying anywhere public.
-- **Rate limiting is in-memory, per-process.** Fine for a single backend instance; won't share limits across multiple replicas — swap for a Redis-backed limiter before horizontally scaling. (Each route now has its own isolated per-IP budget — a cross-route budget-sharing bug was found and fixed, see [ADR 0003](docs/adr/0003-minifasnet-liveness-and-jwt-auth.md).)
+- **Rate limiting is in-memory by default**, which won't share limits across multiple replicas — set `REDIS_URL` to fix this before horizontally scaling (see [ADR 0005](docs/adr/0005-redis-backed-rate-limiter-with-fallback.md)); no Redis is provisioned for this project today, so this is code-ready rather than actually deployed. (Each route has its own isolated per-IP budget regardless of backend — a cross-route budget-sharing bug was found and fixed, see [ADR 0003](docs/adr/0003-minifasnet-liveness-and-jwt-auth.md).)
 - **Passive liveness heuristic is still just a heuristic; MiniFASNet is real but not a security gate.** A real trained anti-spoofing model (MiniFASNet V2) is now available as a user-triggered "Check Liveness" check, but neither signal is wired into any automatic enroll/recognize gate. See [docs/face-detection-verification-checklist.md §11](docs/face-detection-verification-checklist.md#11-liveness-detection) and [docs/model-card-minifasnet.md](docs/model-card-minifasnet.md) — do not rely on either for a security decision.
 - **"Compare" is landmark-geometry similarity, not face recognition** — the Gallery panel's enroll/recognize feature is real embedding-based recognition instead. See [ADR 0001](docs/adr/0001-landmark-similarity-vs-embeddings.md) and [ADR 0002](docs/adr/0002-sface-embeddings-for-gallery-recognition.md).
 - **Gallery recognition is a linear scan**, not a vector index (pgvector/FAISS) — fine at personal scale, would need revisiting for a large number of enrolled identities.
@@ -237,6 +239,11 @@ Three services in one Railway project: managed Postgres, backend, frontend. Each
 
 ### Order matters
 Deploy backend first (get its public URL) → set it as `NEXT_PUBLIC_API_URL` on the frontend → deploy frontend (get its public URL) → set it as `CORS_ORIGINS` on the backend → redeploy the backend once so CORS picks it up.
+
+## Contributing
+
+Solo project today — see [CONTRIBUTING.md](CONTRIBUTING.md) for the review checklist and local
+verification steps a future contributor (or your own pre-commit self-review) should run.
 
 ## License
 
