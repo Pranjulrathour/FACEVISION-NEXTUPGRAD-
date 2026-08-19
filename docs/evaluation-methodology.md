@@ -60,7 +60,7 @@ verification protocol. The parquet file is not committed to the repo
 cd backend
 python -m venv .venv && .venv/Scripts/activate  # or source .venv/bin/activate
 pip install -r requirements.txt
-pip install Pillow scikit-learn pandas pyarrow  # evaluation-only deps, not shipped in production
+pip install -r requirements-eval.txt  # numpy/Pillow/onnxruntime/scikit-learn/pandas/pyarrow -- evaluation-only, not shipped in production
 curl -L -o evaluation/data/lfw_pairs_test.parquet \
   https://huggingface.co/datasets/logasja/lfw/resolve/main/pairs/test-00000-of-00001.parquet
 python evaluation/run_lfw_eval.py

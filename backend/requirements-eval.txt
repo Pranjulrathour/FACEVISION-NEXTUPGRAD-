@@ -1,0 +1,12 @@
+# Evaluation-only dependencies for backend/evaluation/ (checklist §4/§22/§23)
+# and its tests (tests/test_onnx_face_pipeline_eval.py, test_onnx_face_pipeline
+# imports). NOT part of the production app -- deliberately excluded from
+# requirements.txt so the deployed Docker image doesn't carry these. Install
+# alongside requirements.txt for local dev or CI: pip install -r
+# requirements.txt -r requirements-eval.txt. See docs/evaluation-methodology.md.
+numpy==2.4.6
+Pillow==12.3.0
+onnxruntime==1.19.2
+scikit-learn==1.9.0
+pandas==3.0.5
+pyarrow==25.0.1
