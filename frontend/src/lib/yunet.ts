@@ -119,8 +119,14 @@ function buildLandmarks(
 ): FaceLandmarks {
   const col = index % columns;
   const row = Math.floor(index / columns);
-  const baseX = (col + 0.5) * stride;
-  const baseY = (row + 0.5) * stride;
+  // No +0.5 cell-center offset here -- verified against OpenCV's own YuNet
+  // decode (modules/objdetect/src/face_detect.cpp): landmark coordinates
+  // are (kps_offset + grid_index) * stride, not
+  // (grid_index + 0.5 + kps_offset) * stride. The +0.5 that was here before
+  // doesn't match the model's actual regression target and introduced a
+  // small systematic offset (~0.5*stride pixels per axis, pre-scale).
+  const baseX = col * stride;
+  const baseY = row * stride;
   return {
     rightEye: { x: (baseX + kps[index * 10] * stride - dx) / scale, y: (baseY + kps[index * 10 + 1] * stride - dy) / scale },
     leftEye: { x: (baseX + kps[index * 10 + 2] * stride - dx) / scale, y: (baseY + kps[index * 10 + 3] * stride - dy) / scale },
@@ -143,7 +149,7 @@ export function expandBox(x: number, y: number, width: number, height: number): 
   };
 }
 
-function decodeYuNet(
+export function decodeYuNet(
   output: Record<string, import("onnxruntime-web").Tensor>,
   scale: number,
   contentWidth: number,
@@ -163,10 +169,21 @@ function decodeYuNet(
     for (let index = 0; index < cls.length; index += 1) {
       const confidence = Math.sqrt(cls[index] * objectness[index]);
       if (confidence < confidenceThreshold) continue;
-      const x = (index % columns + boxes[index * 4]) * stride - dx;
-      const y = (Math.floor(index / columns) + boxes[index * 4 + 1]) * stride - dy;
+      // (index%columns + bbox[0])*stride and the row equivalent give the
+      // box's CENTER (cx, cy), not its top-left corner -- verified against
+      // OpenCV's own YuNet decode (modules/objdetect/src/face_detect.cpp:
+      // cx/cy computed this way, then `x1 = cx - w/2.f; y1 = cy - h/2.f;`).
+      // This code was using cx/cy directly as the top-left corner, which
+      // drew every box shifted right/down by roughly half its own
+      // width/height -- reported as the frame looking "deviated" from the
+      // face, reproducible on any face since it's a fixed geometric offset,
+      // not something detection-quality-dependent.
       const width = Math.exp(boxes[index * 4 + 2]) * stride;
       const height = Math.exp(boxes[index * 4 + 3]) * stride;
+      const centerX = (index % columns + boxes[index * 4]) * stride - dx;
+      const centerY = (Math.floor(index / columns) + boxes[index * 4 + 1]) * stride - dy;
+      const x = centerX - width / 2;
+      const y = centerY - height / 2;
       const clippedX = Math.max(0, Math.min(x, contentWidth));
       const clippedY = Math.max(0, Math.min(y, contentHeight));
       const clippedWidth = Math.max(0, Math.min(width, contentWidth - clippedX));
