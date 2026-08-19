@@ -1,73 +1,159 @@
-# FaceVision · Private On-Device Face Detection
+<div align="center">
 
+# 👁️ FaceVision
+
+### Privacy-first face detection that never leaves your browser
+
+[![CI](https://github.com/Pranjulrathour/FACEVISION-NEXTUPGRAD-/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Pranjulrathour/FACEVISION-NEXTUPGRAD-/actions/workflows/ci.yml)
+![Next.js](https://img.shields.io/badge/Next.js-16-000000?logo=next.js&logoColor=white)
+![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.141-009688?logo=fastapi&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)
+![ONNX Runtime](https://img.shields.io/badge/ONNX%20Runtime-Web-blueviolet?logo=onnx&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-multi--stage-2496ED?logo=docker&logoColor=white)
+![License](https://img.shields.io/badge/license-private-lightgrey)
+
+**[Live Demo](https://face-vision-frontend-production.up.railway.app)** · **[API Docs](https://face-vision-backend-production.up.railway.app/docs)** · **[Engineering Checklist](docs/face-detection-verification-checklist.md)**
+
+</div>
+
+---
+
+## 🎯 At a Glance
+
+<table>
+<tr>
+<td width="33%" valign="top">
+
+### 🔒 Privacy by Design
+Raw pixels **never leave your device**. Detection, embedding, and anti-spoofing all run client-side via ONNX Runtime Web. The backend only ever sees coordinates and vectors — never images.
+
+</td>
+<td width="33%" valign="top">
+
+### ⚡ Real Models, Not Toys
+YuNet detection, SFace recognition (96.9% verified accuracy on LFW), and MiniFASNet anti-spoofing — all verified byte-for-byte against their ONNX graphs and reference C++ source, not assumed from docs.
+
+</td>
+<td width="33%" valign="top">
+
+### 🧪 Actually Tested
+230+ automated tests across frontend and backend, a real load test against production that found and fixed a live bug, a 14-minute memory soak test, and an adversarial security suite.
+
+</td>
+</tr>
+</table>
+
+---
+
+## 🧭 Table of Contents
+
+| | | |
+|---|---|---|
+| [🏗️ Architecture](#-architecture) | [🖥️ Live Features](#-live-features) | [🚀 Quick Start](#-quick-start) |
+| [🧠 Model Zoo](#-model-zoo) | [📡 API Reference](#-api-reference) | [🛡️ Security & Rate Limiting](#-security--rate-limiting) |
+| [✅ Verification](#-verification) | [📊 Observability](#-observability) | [⚠️ Known Limitations](#-known-limitations) |
+| [☁️ Deploy to Railway](#-deploy-to-railway) | [📚 Documentation Map](#-documentation-map) | [🤝 Contributing](#-contributing) |
+
+---
+
+## 🏗️ Architecture
+
+```mermaid
+flowchart TB
+    subgraph Browser["🌐 Browser — 100% client-side inference"]
+        direction LR
+        UI["Next.js UI"] --> YuNet["YuNet ONNX<br/>face detection"]
+        YuNet --> Quality["Quality gate<br/>blur · pose · size"]
+        YuNet -.->|"on-demand"| MiniFAS["MiniFASNet ONNX<br/>anti-spoofing"]
+        Quality -.->|"enroll / recognize"| SFace["SFace ONNX<br/>128-d embedding"]
+    end
+
+    subgraph Backend["⚙️ FastAPI backend"]
+        direction LR
+        API["/api/v1/*"] --> Auth["JWT auth"]
+        API --> RL["Rate limiter<br/>Redis ⇄ in-memory"]
+        API --> Metrics["/metrics<br/>p50·p95·p99"]
+    end
+
+    subgraph DB["🗄️ PostgreSQL"]
+        direction LR
+        D[("detections")]
+        G[("gallery<br/>embeddings")]
+        Us[("users")]
+    end
+
+    SFace -.->|"vector only, never pixels"| API
+    UI -.->|"metadata only, on explicit save"| API
+    API --> D
+    API --> G
+    API --> Us
+
+    style Browser fill:#0d1b17,stroke:#55f3b0,stroke-width:2px,color:#eafff5
+    style Backend fill:#0d1420,stroke:#3db4ff,stroke-width:2px,color:#e8f3ff
+    style DB fill:#1a1220,stroke:#c792ea,stroke-width:2px,color:#f3e8ff
 ```
-███████╗░█████╗░░█████╗░███████╗██╗░░░██╗██╗░██████╗██╗░█████╗░███╗░░██╗
-██╔════╝██╔══██╗██╔══██╗██╔════╝██║░░░██║██║██╔════╝██║██╔══██╗████╗░██║
-█████╗░░███████║██║░░╚═╝█████╗░░╚██╗░██╔╝██║╚█████╗░██║██║░░██║██╔██╗██║
-██╔══╝░░██╔══██║██║░░██╗██╔══╝░░░╚████╔╝░██║░╚═══██╗██║██║░░██║██║╚████║
-██║░░░░░██║░░██║╚█████╔╝███████╗░░╚██╔╝░░██║██████╔╝██║╚█████╔╝██║░╚███║
-╚═╝░░░░░╚═╝░░╚═╝░╚════╝░╚══════╝░░░╚═╝░░░╚═╝╚═════╝░╚═╝░╚════╝░╚═╝░░╚══╝
-```
 
-> Privacy-first browser-side face detection powered by YuNet (ONNX Runtime Web with WebGPU + WASM fallback).
-
-## Architecture
-
-| Layer | Stack |
-|-------|-------|
-| **Frontend** | Next.js 16 · React 19 · TypeScript · Tailwind CSS · ONNX Runtime Web |
-| **Backend** | FastAPI · Uvicorn · SQLAlchemy 2 |
-| **Database** | PostgreSQL 16 · pgvector-ready · Alembic |
-| **Detector** | `face_detection_yunet_2023mar.onnx` — 640×640 input · WebGPU primary, WASM fallback |
-| **Deployment** | Docker · nginx reverse proxy · multi-stage builds |
-
-Directory layout:
+<details>
+<summary><strong>📁 Directory layout</strong></summary>
 
 ```
 FACEVISION/
-├── frontend/        # Next.js web app (browser-side detection)
-├── backend/         # FastAPI server (history / stats / face comparison)
-├── database/        # PostgreSQL migrations, seeders, alembic
-└── deployment/      # Dockerfiles, compose files, nginx, scripts, docs
+├── frontend/          Next.js app — every model runs here, in the browser
+│   └── src/lib/       yunet.ts · sface.ts · minifasnet.ts · face-alignment.ts …
+├── backend/           FastAPI — metadata/vector persistence only
+│   ├── app/           routers → services → models (clean layering)
+│   └── evaluation/    offline Python harness for accuracy benchmarking
+├── database/          Postgres migrations
+├── deployment/        Dockerfiles, compose, nginx, load-test script
+└── docs/              ADRs, model cards, privacy policy, checklist, reports
 ```
 
-## Privacy First
+</details>
 
-FaceVision runs the YuNet ONNX model **entirely inside your browser**. Images from your camera or hard drive **never leave the device**.
+| Layer | Stack |
+|---|---|
+| **Frontend** | Next.js 16 · React 19 · TypeScript · Tailwind CSS · ONNX Runtime Web |
+| **Backend** | FastAPI · Uvicorn · SQLAlchemy 2 · PyJWT · bcrypt |
+| **Database** | PostgreSQL 16 |
+| **Cache / Rate limit** | Redis (optional, in-memory fallback) |
+| **Deployment** | Docker · Railway · multi-stage builds |
 
-The FastAPI backend stores **metadata only**:
-- Bounding-box geometry (x, y, width, height)
-- 5-point landmark positions (eyes / nose / mouth corners)
-- Confidence scores
-- Optional image name (not the image itself)
-- Aggregate statistics
+---
 
-You can disable history persistence entirely from the **Settings** panel.
+## 🖥️ Live Features
 
-## Live UI Features
+| Panel | What it does |
+|---|---|
+| 🖼️ **Workspace** | Upload or live camera → face cards, confidence badges, annotated PNG export |
+| 🕐 **History** | Thumbnail timeline of the last 100 detections, click to reload |
+| 📈 **Stats** | KPI cards + 7-day trend chart |
+| ⚖️ **Compare** | Landmark-geometry similarity between two faces, animated match meter |
+| 🗂️ **Gallery** | Enroll a face under a name (real SFace embedding) → recognize it later |
+| 🕵️ **Check Liveness** | Per-face button running MiniFASNet V2 anti-spoofing, client-side |
+| ⚙️ **Settings** | Toggle history, labels, landmarks, colors, thresholds |
 
-The frontend ships with 6 integrated panels:
+> **Privacy note:** the backend is entirely optional. Disable history persistence in Settings and FaceVision never talks to a server at all.
 
-1. **Workspace** — Upload or live camera. Face cards with confidence badges. Export annotated PNG. Compare A/B slot chips, Enroll/Recognize actions.
-2. **History** — Thumbnail timeline of the last 100 detections; click to reload any previous result.
-3. **Stats** — 4 KPI cards + 7-day bar chart of faces detected per day.
-4. **Compare** — Landmark-cosine similarity between two selected faces. Two slots, adjustable threshold, animated match meter.
-5. **Gallery** — Enroll a detected face under a name (real SFace embedding, not an image), then recognize it in future detections. See [ADR 0002](docs/adr/0002-sface-embeddings-for-gallery-recognition.md) for how this differs from Compare.
-6. **Settings** — Toggle history, labels, landmarks, custom frame/landmark colors, compare threshold.
-7. **Check Liveness** — per-face button (Workspace panel) running a real MiniFASNet V2 anti-spoofing model client-side, in addition to the passive movement heuristic. See [docs/model-card-minifasnet.md](docs/model-card-minifasnet.md) and [ADR 0003](docs/adr/0003-minifasnet-liveness-and-jwt-auth.md).
+---
 
-## Quick Start (Local Dev)
+## 🚀 Quick Start
 
-### 1. PostgreSQL (docker, one command)
+<table>
+<tr><th>1️⃣ Database</th><th>2️⃣ Backend</th><th>3️⃣ Frontend</th></tr>
+<tr valign="top">
+<td>
 
 ```powershell
 cd deployment/docker
-docker compose -f docker-compose.dev.yml up -d
+docker compose `
+  -f docker-compose.dev.yml `
+  up -d
 ```
 
-Connection string: `postgresql+psycopg2://facevision:facevision@localhost:5432/facevision`
-
-### 2. Backend (FastAPI)
+</td>
+<td>
 
 ```powershell
 cd backend
@@ -76,175 +162,283 @@ python -m venv .venv
 pip install -r requirements.txt
 copy .env.example .env
 python run.py
-# -> http://localhost:8000/docs
 ```
 
-### 3. Frontend (Next.js)
+</td>
+<td>
 
 ```powershell
 cd frontend
 npm install
 npm run dev
-# -> http://localhost:3000
 ```
 
-### 4. Full stack (docker)
+</td>
+</tr>
+<tr><td colspan="3" align="center">
 
-```powershell
-.\deployment\scripts\start.ps1 -Env prod
-```
+→ Backend: `http://localhost:8000/docs` &nbsp;·&nbsp; Frontend: `http://localhost:3000`
 
-## Model Details
+</td></tr>
+</table>
 
-| Property | Value |
-|---|---|
-| Model file | `frontend/public/models/face_detection_yunet_2023mar.onnx` |
-| Input shape | `1 × 3 × 640 × 640` (NCHW) |
-| Execution providers | WebGPU → auto degrade → WASM |
-| Min input size | 128 px (smaller faces may be missed) |
-| 5 landmarks | Right eye · Left eye · Nose · Right mouth corner · Left mouth corner |
+Or the whole stack in one shot: `.\deployment\scripts\start.ps1 -Env prod`
 
-*Tensor dimension is locked to 640×640. 320×320 will fail immediately. See [`frontend/src/lib/yunet.ts`](file:///d:/PABLO%20ESCOBAR/FACEVISION/frontend/src/lib/yunet.ts)*
+---
 
-## Backend API
+## 🧠 Model Zoo
 
-Routes are versioned under `/api/v1` (canonical). The unversioned `/api/...` paths still work
-identically but return a `Deprecation: true` header + `Link` pointer to the `/v1` replacement —
-kept for backward compatibility, not recommended for new integrations.
+Every model here was verified against its actual ONNX graph and, where possible, the original reference implementation — not assumed from documentation.
 
-| Method | Route (v1) | Description |
+| Model | Task | Input | Output | Verified accuracy |
+|---|---|---|---|---|
+| **YuNet** `2023mar` | Face detection | `1×3×640×640` | Boxes + 5 landmarks | — |
+| **SFace** `2021dec` | 128-d recognition embedding | `1×3×112×112` aligned | 128-d vector | **96.9%** on 2200 real LFW pairs, ROC AUC **0.994** |
+| **MiniFASNet** `V2` | Anti-spoofing | `1×3×80×80` | 3-class logits | user-triggered, not a security gate |
+
+<details>
+<summary><strong>📄 Model cards & decision records</strong></summary>
+
+- [docs/model-card-yunet.md](docs/model-card-yunet.md)
+- [docs/model-card-sface.md](docs/model-card-sface.md)
+- [docs/model-card-minifasnet.md](docs/model-card-minifasnet.md)
+- [docs/reports/evaluation-sface-lfw.md](docs/reports/evaluation-sface-lfw.md) — the full LFW benchmark writeup
+- [docs/evaluation-methodology.md](docs/evaluation-methodology.md) — how those numbers were produced, and their honest caveats
+
+</details>
+
+All execution runs **WebGPU first, WASM fallback** — loaded once per session, never reloaded per detection.
+
+---
+
+## 📡 API Reference
+
+All routes versioned under `/api/v1` (canonical). Unversioned `/api/...` paths still work but return a `Deprecation` header.
+
+<details open>
+<summary><strong>Detections · History · Stats · Compare</strong></summary>
+
+| Method | Route | Description |
 |---|---|---|
-| `GET` | `/api/v1/health` | Liveness check |
-| `POST` | `/api/v1/detections` | Store a detection (faces + metadata) |
-| `GET` | `/api/v1/detections?limit=&offset=&mode=` | Paginated list |
-| `GET` | `/api/v1/detections/{id}` | One record with faces |
-| `DELETE` | `/api/v1/detections/{id}` | Delete one record |
-| `GET` | `/api/v1/history` | Alias + filtering |
-| `DELETE` | `/api/v1/history` | Clear all history |
-| `GET` | `/api/v1/stats` | KPI summary + 7-day trend |
-| `POST` | `/api/v1/compare` | Landmark cosine similarity match (Compare panel) |
-| `POST` | `/api/v1/gallery/enroll` | Enroll an SFace embedding under a name (Gallery panel) |
-| `GET` | `/api/v1/gallery` | List enrolled identities |
-| `DELETE` | `/api/v1/gallery/{id}` | Remove an enrolled identity |
-| `POST` | `/api/v1/gallery/recognize` | Match an embedding against the gallery |
-| `POST` | `/api/v1/auth/register` | Create an account (email + password), returns a JWT |
-| `POST` | `/api/v1/auth/login` | Exchange email + password for a JWT |
-| `GET` | `/api/v1/auth/me` | Current authenticated user (requires `Authorization: Bearer <token>`) |
-| `GET` | `/api/v1/metrics` | Per-route request counts, error rates, p50/p95/p99 latency (§18) |
+| `GET` | `/health` | Liveness check |
+| `POST` | `/detections` | Store a detection (faces + metadata) |
+| `GET` | `/detections?limit=&offset=&mode=` | Paginated list |
+| `GET` | `/detections/{id}` | One record with faces |
+| `DELETE` | `/detections/{id}` | Delete one record |
+| `GET` / `DELETE` | `/history` | Alias + filtering / clear all |
+| `GET` | `/stats` | KPI summary + 7-day trend |
+| `POST` | `/compare` | Landmark cosine similarity |
 
-Interactive Swagger UI: http://localhost:8000/docs
+</details>
 
-Presenting a valid `Authorization: Bearer <token>` on the gallery endpoints scopes that data to
-the authenticated user's real id instead of the client-supplied `userSessionId` — see
-[ADR 0003](docs/adr/0003-minifasnet-liveness-and-jwt-auth.md). There is currently no frontend
-login/register form; use the endpoints directly (e.g. via Swagger UI or curl) to try this.
+<details>
+<summary><strong>Gallery (real face recognition)</strong></summary>
 
-### Security & rate limiting
+| Method | Route | Description |
+|---|---|---|
+| `POST` | `/gallery/enroll` | Enroll an SFace embedding under a name |
+| `GET` | `/gallery` | List enrolled identities |
+| `DELETE` | `/gallery/{id}` | Remove an identity |
+| `POST` | `/gallery/recognize` | Match an embedding against the gallery |
+
+</details>
+
+<details>
+<summary><strong>Auth & Observability</strong></summary>
+
+| Method | Route | Description |
+|---|---|---|
+| `POST` | `/auth/register` | Create an account, returns a JWT |
+| `POST` | `/auth/login` | Exchange credentials for a JWT |
+| `GET` | `/auth/me` | Current authenticated user |
+| `GET` | `/metrics` | Per-route request counts, error rates, p50/p95/p99 |
+
+A valid `Authorization: Bearer <token>` on gallery endpoints binds that data to the real authenticated user instead of a client-claimed session ID — see [ADR 0003](docs/adr/0003-minifasnet-liveness-and-jwt-auth.md). *(No frontend login form yet — use the API directly.)*
+
+</details>
+
+Interactive Swagger UI: `http://localhost:8000/docs`
+
+---
+
+## 🛡️ Security & Rate Limiting
 
 | Env var | Default | Effect |
 |---|---|---|
-| `API_KEY` | unset (disabled) | When set, `X-API-Key` is required on `POST /api/v1/detections`, `DELETE /api/v1/detections/{id}`, and `DELETE /api/v1/history` (and their deprecated `/api/...` aliases) |
-| `DETECTIONS_RATE_LIMIT_PER_MIN` | `30` | Per-IP limit on `POST /api/v1/detections` |
-| `COMPARE_RATE_LIMIT_PER_MIN` | `30` | Per-IP limit on `POST /api/v1/compare` |
-| `GALLERY_ENROLL_RATE_LIMIT_PER_MIN` | `20` | Per-IP limit on `POST /api/v1/gallery/enroll` |
-| `GALLERY_RECOGNIZE_RATE_LIMIT_PER_MIN` | `60` | Per-IP limit on `POST /api/v1/gallery/recognize` |
-| `AUTH_RATE_LIMIT_PER_MIN` | `10` | Per-IP limit on `POST /api/v1/auth/register` and `.../login` — deliberately tight to slow down credential-stuffing/enumeration attempts |
-| `JWT_SECRET` | unset (ephemeral, process-lifetime fallback) | HS256 signing key for auth tokens. **Must be set to a real secret in production** — the fallback works for local dev but invalidates all issued tokens on every restart and isn't safe to run multi-instance |
-| `JWT_EXPIRE_MINUTES` | `10080` (7 days) | Access token lifetime |
-| `RETENTION_DAYS` | unset (disabled) | If set, `python backend/scripts/purge_old_detections.py` deletes detections older than this many days. See [docs/privacy-retention-policy.md](docs/privacy-retention-policy.md). |
-| `REDIS_URL` | unset (in-memory rate limiting) | If set, rate limits are enforced against Redis instead of per-process memory, so every replica shares one budget instead of each enforcing its own. Falls back to in-memory automatically if Redis is unreachable. See [ADR 0005](docs/adr/0005-redis-backed-rate-limiter-with-fallback.md). |
+| `API_KEY` | unset | Gates write/destructive endpoints when set |
+| `JWT_SECRET` | ephemeral fallback | HS256 signing key — **set explicitly in production** |
+| `JWT_EXPIRE_MINUTES` | `10080` (7d) | Access token lifetime |
+| `REDIS_URL` | unset (in-memory) | Shares rate-limit budget across replicas when set; falls back gracefully if unreachable — [ADR 0005](docs/adr/0005-redis-backed-rate-limiter-with-fallback.md) |
+| `RETENTION_DAYS` | unset | Auto-purges detections older than N days |
+| `DETECTIONS_RATE_LIMIT_PER_MIN` | `30` | Per-IP limit on detection writes |
+| `AUTH_RATE_LIMIT_PER_MIN` | `10` | Deliberately tight — slows credential stuffing |
 
-Set `API_KEY` and `JWT_SECRET` before any real deployment — `API_KEY` is intentionally a no-op in local dev so the anonymous-write flow keeps working out of the box, and `JWT_SECRET` falls back to a random per-process value so auth still works locally without configuration, but that fallback is not appropriate for anything beyond local dev. All backend configuration is centralized in [backend/app/core/config.py](backend/app/core/config.py).
+All configuration centralized in [`backend/app/core/config.py`](backend/app/core/config.py).
 
-## Verification
+---
+
+## ✅ Verification
+
+| Suite | Coverage |
+|---|---|
+| 🧪 Frontend unit tests | **116** tests — detection, alignment, embedding, anti-spoofing, pipeline |
+| 🧪 Backend unit tests | **122** tests — auth, gallery isolation, rate limiting, metrics, adversarial security |
+| 🎯 Accuracy | 96.9% SFace verification accuracy, measured against 2200 real LFW pairs |
+| 🩹 Memory soak | 170 detection cycles / 14 min against live prod — no leak found |
+| 🔥 Load test | Run against production — found & fixed a real schema-drift bug in the process |
+| 🔐 Adversarial security | Injection strings, payload boundaries, enumeration, auth bypass attempts |
 
 ```powershell
 # Frontend
-cd frontend
-npm run typecheck     # TypeScript (strict)
-npm run lint          # ESLint
-npm test              # Vitest unit tests
+cd frontend && npm run typecheck && npm run lint && npm test && npm run build
 
 # Backend
-cd backend
-pip install -r requirements.txt
-pytest -v
+cd backend && pip install -r requirements.txt -r requirements-eval.txt && pytest -v
 ```
 
-CI also runs `npm audit --audit-level=high` and `pip-audit -r requirements.txt --strict` on every push — dependency CVEs fail the build, not just a manual check.
-
-### Load testing
+CI additionally runs `npm audit` and `pip-audit --strict` on every push — dependency CVEs fail the build.
 
 ```powershell
+# Load test
 k6 run deployment/scripts/load-test.js
-# against a different host:
-k6 run -e BASE_URL=http://localhost:8000 deployment/scripts/load-test.js
 ```
 
-Ramps to 20 virtual users hitting `/api/v1/health`, `/api/v1/detections`, and `/api/v1/stats`; asserts p95 latency < 500ms and a <1% hard-failure rate (429s from the rate limiter are treated as expected, not failures).
+---
 
-## Known Limitations
+## 📊 Observability
 
-- **No API-key auth by default.** `API_KEY` is opt-in (see [Security & rate limiting](#security--rate-limiting)) — set it before deploying anywhere public. Real user accounts (JWT + bcrypt) now exist independently of `API_KEY` — see below.
-- **Single-node Postgres.** No replication/failover configured; back up the `facevision_postgres_data` volume yourself.
-- **`app_settings` remains reserved-but-unused.** `users` is now active (JWT + bcrypt auth) and `face_gallery`/`gallery_face_samples` are active (see [ADR 0002](docs/adr/0002-sface-embeddings-for-gallery-recognition.md)) — gallery entries can be scoped either by anonymous session ID or by a real authenticated user id.
-- **No frontend login/register UI yet.** The backend fully supports auth via direct API calls; `face-vision.tsx` has no form for it. Tracked gap, not a silent omission.
-- **No self-service "delete my account" endpoint.** Account deletion currently requires direct database access by an operator.
-- **`JWT_SECRET` falls back to an ephemeral per-process value if unset** — fine for local dev, but invalidates all issued tokens on every restart and is unsafe for a multi-instance deployment. Set it explicitly before deploying anywhere public.
-- **Rate limiting is in-memory by default**, which won't share limits across multiple replicas — set `REDIS_URL` to fix this before horizontally scaling (see [ADR 0005](docs/adr/0005-redis-backed-rate-limiter-with-fallback.md)); no Redis is provisioned for this project today, so this is code-ready rather than actually deployed. (Each route has its own isolated per-IP budget regardless of backend — a cross-route budget-sharing bug was found and fixed, see [ADR 0003](docs/adr/0003-minifasnet-liveness-and-jwt-auth.md).)
-- **Passive liveness heuristic is still just a heuristic; MiniFASNet is real but not a security gate.** A real trained anti-spoofing model (MiniFASNet V2) is now available as a user-triggered "Check Liveness" check, but neither signal is wired into any automatic enroll/recognize gate. See [docs/face-detection-verification-checklist.md §11](docs/face-detection-verification-checklist.md#11-liveness-detection) and [docs/model-card-minifasnet.md](docs/model-card-minifasnet.md) — do not rely on either for a security decision.
-- **"Compare" is landmark-geometry similarity, not face recognition** — the Gallery panel's enroll/recognize feature is real embedding-based recognition instead. See [ADR 0001](docs/adr/0001-landmark-similarity-vs-embeddings.md) and [ADR 0002](docs/adr/0002-sface-embeddings-for-gallery-recognition.md).
-- **Gallery recognition is a linear scan**, not a vector index (pgvector/FAISS) — fine at personal scale, would need revisiting for a large number of enrolled identities.
-- **`POST /api/v1/gallery/recognize` is intentionally not gated behind `API_KEY`** (a visitor needs to check faces against the gallery to use the feature) — it's rate-limited instead.
+`GET /api/v1/metrics` — zero external dependencies, zero signup:
 
-Full engineering checklist, gap analysis, and honest production-readiness assessment: [docs/face-detection-verification-checklist.md](docs/face-detection-verification-checklist.md).
+```json
+{
+  "uptimeSeconds": 41230.5,
+  "routes": {
+    "GET /api/v1/detections": {
+      "requestCount": 812,
+      "errorCount": 0,
+      "errorRate": 0.0,
+      "p50Ms": 12.4,
+      "p95Ms": 38.1,
+      "p99Ms": 61.7
+    }
+  }
+}
+```
 
-## Deployment Documentation
+Grouped by path *template* (`{detection_id}`, not the literal ID) so per-record traffic doesn't fragment the stats.
 
-- **Full guide:** [`deployment/deployment.md`](deployment/deployment.md)
-- **Docker / compose:** [`deployment/docker/readme.md`](deployment/docker/readme.md)
-- **Postgres schema:** [`database/readme.md`](database/readme.md)
-- **FastAPI backend:** [`backend/readme.md`](backend/readme.md)
+---
 
-## Deploy to Railway
+## ⚠️ Known Limitations
 
-Three services in one Railway project: managed Postgres, backend, frontend. Each app service uses its own `railway.toml` + `Dockerfile` committed at its package root — Railway just needs the right **Root Directory** set per service.
+<details>
+<summary><strong>Click to expand — the honest gaps, not hidden in prose</strong></summary>
 
-### 1. Database
-- New → Database → **PostgreSQL** (Railway's managed plugin). No Dockerfile needed.
-- Copy the plugin's `DATABASE_URL` reference variable for the backend service below.
+| Area | Gap |
+|---|---|
+| Auth UI | Backend fully supports JWT auth; no frontend login/register form yet |
+| Account deletion | No self-service endpoint — requires operator DB access |
+| Rate limiting | In-memory by default; Redis-capable but not provisioned today |
+| Liveness | MiniFASNet + heuristic are real signals but **not wired into any security gate** |
+| Compare vs. Gallery | "Compare" is landmark-geometry similarity, not recognition — Gallery is the real embedding-based path |
+| Gallery scale | Linear cosine-similarity scan, no vector index — fine at personal scale |
+| Postgres | Single-node, no replication — back up the volume yourself |
+| `gallery/recognize` | Intentionally not gated behind `API_KEY` (visitors need to use it) — rate-limited instead |
 
-### 2. Backend service
-- New → GitHub Repo → this repo, set **Root Directory** = `backend`.
-- Railway auto-detects [`backend/railway.toml`](backend/railway.toml) → builds [`backend/Dockerfile`](backend/Dockerfile).
-- Environment variables:
+Full gap analysis and honest production-readiness assessment: [docs/face-detection-verification-checklist.md](docs/face-detection-verification-checklist.md).
 
-  | Variable | Value |
-  |---|---|
-  | `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` (Railway variable reference to the Postgres plugin) |
-  | `API_KEY` | a real secret — required for production, see [Security & rate limiting](#security--rate-limiting) |
-  | `CORS_ORIGINS` | the frontend service's public URL once it exists, e.g. `https://facevision-frontend.up.railway.app` |
-  | `DETECTIONS_RATE_LIMIT_PER_MIN` / `COMPARE_RATE_LIMIT_PER_MIN` | optional, default `30` |
+</details>
 
-  `PORT` is injected automatically by Railway — `run.py` already reads it. The legacy `postgres://` scheme some Railway plugins emit is normalized automatically (see `app/database.py`).
-- Health check: `/api/health` (already wired via `railway.toml`).
-- First deploy creates `detection_records` + `face_records` via SQLAlchemy `create_all()` on startup — the full SQL migration (extra reserved tables, views, triggers) is optional and only needed if you extend those features; apply it manually with `psql "$DATABASE_URL" -f database/migrations/001_init_schema.sql` if you want it. Column-adding migrations (`002`–`004`) no longer need to be applied by hand — `init_db()` re-applies them idempotently on every startup (see [ADR 0004](docs/adr/0004-self-healing-column-migrations.md)), after a real incident where one of them was never manually run against production and three read endpoints silently 500'd as a result.
+---
 
-### 3. Frontend service
-- New → GitHub Repo → this repo again, set **Root Directory** = `frontend`.
-- Railway auto-detects [`frontend/railway.toml`](frontend/railway.toml) → builds [`frontend/Dockerfile`](frontend/Dockerfile).
-- Build-time variable (not just runtime — it's inlined into the JS bundle): `NEXT_PUBLIC_API_URL` = the backend service's public URL + `/api`, e.g. `https://facevision-backend.up.railway.app/api`.
-- Health check: `/` (already wired via `railway.toml`).
-- `PORT` is injected automatically; Next's standalone server reads it directly.
+## ☁️ Deploy to Railway
 
-### Order matters
-Deploy backend first (get its public URL) → set it as `NEXT_PUBLIC_API_URL` on the frontend → deploy frontend (get its public URL) → set it as `CORS_ORIGINS` on the backend → redeploy the backend once so CORS picks it up.
+```mermaid
+flowchart LR
+    A["1️⃣ Postgres<br/>managed plugin"] --> B["2️⃣ Backend<br/>root: backend/"]
+    B --> C["3️⃣ Frontend<br/>root: frontend/"]
+    C -.->|"CORS_ORIGINS"| B
 
-## Contributing
+    style A fill:#1a2e1a,stroke:#4caf50,color:#e8ffe8
+    style B fill:#0d1420,stroke:#3db4ff,color:#e8f3ff
+    style C fill:#0d1b17,stroke:#55f3b0,color:#eafff5
+```
 
-Solo project today — see [CONTRIBUTING.md](CONTRIBUTING.md) for the review checklist and local
-verification steps a future contributor (or your own pre-commit self-review) should run.
+<details>
+<summary><strong>Step-by-step environment variables</strong></summary>
 
-## License
+**Backend** (`Root Directory` = `backend`):
+
+| Variable | Value |
+|---|---|
+| `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` |
+| `API_KEY` | a real secret |
+| `CORS_ORIGINS` | frontend's public URL |
+| `JWT_SECRET` | a real secret |
+
+**Frontend** (`Root Directory` = `frontend`):
+
+| Variable | Value |
+|---|---|
+| `NEXT_PUBLIC_API_URL` | backend's public URL + `/api` (build-time!) |
+
+Deploy order: **backend → get URL → frontend → get URL → set `CORS_ORIGINS` on backend → redeploy backend.**
+
+Column-adding migrations self-heal on startup ([ADR 0004](docs/adr/0004-self-healing-column-migrations.md)) — no manual `psql` step needed.
+
+Full guides: [`deployment/deployment.md`](deployment/deployment.md) · [`deployment/docker/readme.md`](deployment/docker/readme.md) · [`database/readme.md`](database/readme.md) · [`backend/readme.md`](backend/readme.md)
+
+</details>
+
+---
+
+## 📚 Documentation Map
+
+<table>
+<tr><th>Architecture Decisions</th><th>Model Cards</th><th>Reports & Policy</th></tr>
+<tr valign="top">
+<td>
+
+- [0001 · Landmark similarity vs. embeddings](docs/adr/0001-landmark-similarity-vs-embeddings.md)
+- [0002 · SFace embeddings for gallery](docs/adr/0002-sface-embeddings-for-gallery-recognition.md)
+- [0003 · MiniFASNet + JWT auth](docs/adr/0003-minifasnet-liveness-and-jwt-auth.md)
+- [0004 · Self-healing migrations](docs/adr/0004-self-healing-column-migrations.md)
+- [0005 · Redis rate limiter fallback](docs/adr/0005-redis-backed-rate-limiter-with-fallback.md)
+
+</td>
+<td>
+
+- [YuNet](docs/model-card-yunet.md)
+- [SFace](docs/model-card-sface.md)
+- [MiniFASNet](docs/model-card-minifasnet.md)
+
+</td>
+<td>
+
+- [LFW evaluation](docs/reports/evaluation-sface-lfw.md)
+- [Load test results](docs/reports/load-test-results.md)
+- [Evaluation methodology](docs/evaluation-methodology.md)
+- [Privacy & retention policy](docs/privacy-retention-policy.md)
+- [Full engineering checklist](docs/face-detection-verification-checklist.md)
+
+</td>
+</tr>
+</table>
+
+---
+
+## 🤝 Contributing
+
+Solo project today — see [CONTRIBUTING.md](CONTRIBUTING.md) for the review checklist and local verification steps.
+
+## 📄 License
 
 Private build for Pranjul Rathour.
+
+<div align="center">
+
+---
+
+Built with a lot of ONNX graph inspection and not enough sleep. 👁️
+
+</div>
