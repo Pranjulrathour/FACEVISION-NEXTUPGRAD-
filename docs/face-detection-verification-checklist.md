@@ -18,7 +18,7 @@ as the system evolves, don't let it go stale.
 | **1 — Foundation** | §6 §7 §9 §12 §14 §20 | ✅ Done — magic-byte validation, pixel-level blur/lighting checks, inference timeout, `/api/v1` versioning, centralized config |
 | **2 — Recognition** | §2 §5 §10 §28 | ✅ Done — real SFace embeddings + face alignment, enroll/recognize gallery, `BiometricProfiles`-style tables activated |
 | **3 — Security** | §11 §15 §16 §24 | ✅ Done — real MiniFASNet ONNX liveness check, JWT auth + bcrypt with cryptographically-bound gallery scoping, dedicated adversarial security test suite. Frontend auth UI not yet built (tracked gap) |
-| 4 — Measurement | §4 §13 §22 §23 §25 §33 §36 | ⏳ Not started — evaluation harness (needs a dataset you supply), load + memory profiling |
+| **4 — Measurement** | §4 §13 §22 §23 §25 §33 §36 | ✅ Done — real LFW-based accuracy evaluation (96.9%, ROC AUC 0.994), memory soak test (no leak found), live load test (found and fixed a real production schema-drift bug). Bias/fairness (§25/§33) remains honestly unmeasured — LFW has no demographic labels |
 | 5 — Ops/Governance | §18 §26 §27 §37 §38 §40–43 | ⏳ Not started — `/metrics` + percentiles, Redis-backed rate limiter, caching, PR/governance workflow |
 
 ---
@@ -319,8 +319,17 @@ after the fact.
 Since inference is entirely client-side, ".NET GC/LOH" concerns from the original checklist
 don't apply — the equivalent browser-side risks are:
 
-- [ ] Not verified: whether long live-camera sessions leak `ImageData`/canvas buffers over time
-  — worth a manual soak test (leave camera mode running 10+ minutes, watch tab memory)
+- [x] Soak-tested (Phase 4, §13): 170 repeated detection cycles over ~14 minutes against the
+  live Railway deployment (scripted via `performance.memory.usedJSHeapSize` sampling every
+  cycle, since a real camera device isn't available in the testing environment — upload-mode
+  detection exercises the identical canvas/ImageData/ONNX-session code path as camera mode's
+  per-frame `scan()` loop). Result: **~58KB total heap growth across 170 cycles (~340
+  bytes/cycle)** — noise-level, not a leak signature. A real `ImageData`/canvas leak would show
+  multi-MB growth (a single 250×250 buffer alone is ~250KB); this doesn't. No leak found.
+- [~] Live camera mode itself (as opposed to the equivalent upload-mode code path tested above)
+  still hasn't been soak-tested with an actual camera device/browser tab open for 10+ minutes —
+  worth doing if a real device becomes available, though the shared code path result above is
+  reassuring.
 - [x] Backend: no raw images ever reach it, so there's no large-buffer risk there by design
 - [x] Backend: SQLAlchemy sessions are properly scoped per-request via `get_db()` dependency
   ([database.py](../backend/app/database.py)) — no session/connection leakage pattern
@@ -469,14 +478,17 @@ they're visible in the UI at detection time, not retroactively needed per histor
 |---|---|
 | Frontend unit tests | [x] `image.test.ts`, `yunet.test.ts`, `face-math.test.ts`, `sface.test.ts`, `face-alignment.test.ts`, `minifasnet.test.ts`, `antispoof-crop.test.ts`, `face-pipeline.test.ts` — validation, NMS, landmark-similarity, embedding, alignment, and anti-spoofing logic all covered |
 | Backend unit tests | [x] auth (`test_auth_core.py`, `test_auth_service.py`, `test_auth_router.py`), gallery + cross-user isolation (`test_gallery_router.py`), dedicated adversarial suite (`test_security_adversarial.py`), plus the existing detection/stats/compare/security-gate/rate-limiter/DB-normalization/retention-purge/full-pipeline coverage |
-| Representative test dataset (lighting/skin tone/age/angle/occlusion diversity) | [ ] not built — tests use synthetic coordinate fixtures, not a real diverse image set |
-| Measured accuracy (precision/recall/FAR/FRR) | [ ] not measured — no benchmark numbers exist beyond "it works in manual testing" |
+| Representative test dataset (lighting/skin tone/age/angle/occlusion diversity) | [ ] not built — LFW (below) is a real photographic dataset but is not demographically diverse/annotated; still no representative diversity dataset |
+| Measured accuracy (precision/recall/FAR/FRR) | [x] **Real measurement, Phase 4**: SFace verification accuracy measured against 2200 real LFW pairs — 96.9% accuracy at the app's 0.363 threshold, 0% false accept rate, 6.2% false reject rate, ROC AUC 0.994. See [docs/reports/evaluation-sface-lfw.md](reports/evaluation-sface-lfw.md) and [docs/evaluation-methodology.md](../evaluation-methodology.md) for the full methodology and honest caveats (LFW is not demographically balanced — this is not a fairness claim, see §33) |
+| Memory soak testing (§13) | [x] 170 detection cycles over ~14 minutes against the live deployment showed ~58KB total heap growth (noise-level) — no leak found; see §13 |
 | Security testing (malicious files, oversized payloads, replay/spoofing) | [x] dedicated adversarial suite (`test_security_adversarial.py`, §24): `MAX_FACES_PER_DETECTION` boundary (128 accepted / 129 rejected), SQL-injection-style and script-tag strings stored literally (not executed/reflected), unauthorized access without/with-wrong `API_KEY`, sequential-ID enumeration returns uniform 404s, no exception details leak in error responses — plus JWT tampering/expiry/wrong-secret rejection and login-enumeration-safety covered in the auth test files |
-| Load testing | [x] k6 script exists and is documented; not yet run against the live Railway deployment to get real numbers |
+| Load testing | [x] **Run against the live Railway deployment, Phase 4** — and it found a real production incident, not just capacity numbers: `GET /api/v1/stats`, `/detections`, and `/history` were all returning 500 due to a missing `detection_records.model_version` column on the live database (`create_all()` never alters existing tables — the migration that adds this column was apparently never run against production). Fixed by making startup self-heal this class of drift (`apply_idempotent_column_migrations()` in `app/database.py`). See [docs/reports/load-test-results.md](reports/load-test-results.md) for the full writeup, including why the raw 66% failure rate is misleading (it blends this bug with an *expected* 401 from testing the write path without an API key) — a clean authenticated-write latency number is still an open follow-up. |
 
-**Honest summary:** functional correctness is well-tested, and adversarial/security-boundary
-behavior now has dedicated coverage (§24); measured accuracy and real-world load numbers are
-still not measured — don't claim specific accuracy percentages until they're measured.
+**Honest summary:** functional correctness is well-tested, adversarial/security-boundary
+behavior has dedicated coverage (§24), and Phase 4 added a real accuracy measurement (§22-23)
+and a real load test — which paid for itself immediately by finding a genuine production bug
+that no amount of testing against a freshly-created local database could have caught. Bias/
+fairness measurement (§25/§33) remains genuinely unmeasured — see the LFW caveats above.
 
 ---
 
@@ -580,16 +592,22 @@ set per §22 before merging).
 
 ## 33. Bias & Fairness Testing
 
-**Not done.** No demographic breakdown of detection accuracy exists. Given this app doesn't
-make consequential decisions about people (no auth/access-control gated on face match), the
-risk profile is lower than a KYC or access-control system — but if FaceVision's scope ever
-expands toward identity decisions, this becomes mandatory, not optional.
+**Still not done, and the Phase 4 accuracy measurement (§22-23) does not change that.** The LFW
+evaluation ([docs/evaluation-methodology.md](../evaluation-methodology.md)) measured *overall*
+verification accuracy, not accuracy broken down by demographic group — LFW itself carries no
+demographic labels and is documented in the fairness literature as skewed toward light-skinned
+adult men, so it couldn't answer this question even if the numbers were sliced. A real answer
+would need a demographically-labeled dataset (e.g. BFW, RFW) — explicitly out of scope for this
+pass. Given this app doesn't make consequential decisions about people (face-match results
+aren't gated behind any access-control decision), the risk profile is lower than a KYC or
+access-control system — but if FaceVision's scope ever expands toward identity decisions, this
+becomes mandatory, not optional.
 
 ---
 
 ## 34–36. Unit / Integration / Performance Tests
 
-- [x] Unit tests: 31 frontend (Vitest) + 30 backend (pytest)
+- [x] Unit tests: 114 frontend (Vitest) + 108 backend (pytest)
 - [x] Integration tests: [test_full_pipeline_integration.py](../backend/tests/test_full_pipeline_integration.py)
   exercises the full HTTP pipeline (create → retrieve → list → stats → compare → clear) via
   `with TestClient(app) as client:` — which is required to trigger the app's lifespan

@@ -226,7 +226,7 @@ Three services in one Railway project: managed Postgres, backend, frontend. Each
 
   `PORT` is injected automatically by Railway — `run.py` already reads it. The legacy `postgres://` scheme some Railway plugins emit is normalized automatically (see `app/database.py`).
 - Health check: `/api/health` (already wired via `railway.toml`).
-- First deploy creates `detection_records` + `face_records` via SQLAlchemy `create_all()` on startup — the full SQL migration (extra reserved tables, views, triggers) is optional and only needed if you extend those features; apply it manually with `psql "$DATABASE_URL" -f database/migrations/001_init_schema.sql` if you want it.
+- First deploy creates `detection_records` + `face_records` via SQLAlchemy `create_all()` on startup — the full SQL migration (extra reserved tables, views, triggers) is optional and only needed if you extend those features; apply it manually with `psql "$DATABASE_URL" -f database/migrations/001_init_schema.sql` if you want it. Column-adding migrations (`002`–`004`) no longer need to be applied by hand — `init_db()` re-applies them idempotently on every startup (see [ADR 0004](docs/adr/0004-self-healing-column-migrations.md)), after a real incident where one of them was never manually run against production and three read endpoints silently 500'd as a result.
 
 ### 3. Frontend service
 - New → GitHub Repo → this repo again, set **Root Directory** = `frontend`.
