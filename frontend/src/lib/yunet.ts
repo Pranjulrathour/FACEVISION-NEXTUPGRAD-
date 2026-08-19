@@ -4,10 +4,17 @@ import type { Face, FaceLandmarks } from "./face-types";
 export const YUNET_MODEL_URL = "/models/face_detection_yunet_2023mar.onnx";
 export const YUNET_MODEL_VERSION = "yunet-2023mar";
 const INPUT_SIZE = 640;
-const BOX_PADDING_TOP = 0.35;
-const BOX_PADDING_BOTTOM = 0.25;
-const BOX_PADDING_LEFT = 0.22;
-const BOX_PADDING_RIGHT = 0.22;
+// YuNet's raw box is already a reasonably tight face box (WIDER FACE-style
+// annotation), so this only needs to add a little headroom for
+// forehead/hair/chin — not double the box size. The previous values here
+// (0.35/0.25/0.22/0.22) added up to ~60% extra height, which reads as
+// "way too big and floating above the head" on a close-up webcam frame,
+// even though the underlying detection was accurate — reported as the box
+// looking "deviated" from the face. Tightened based on that report.
+const BOX_PADDING_TOP = 0.12;
+const BOX_PADDING_BOTTOM = 0.08;
+const BOX_PADDING_LEFT = 0.08;
+const BOX_PADDING_RIGHT = 0.08;
 
 type Ort = typeof import("onnxruntime-web");
 type Session = import("onnxruntime-web").InferenceSession;
@@ -123,7 +130,7 @@ function buildLandmarks(
   };
 }
 
-function expandBox(x: number, y: number, width: number, height: number): { x: number; y: number; width: number; height: number } {
+export function expandBox(x: number, y: number, width: number, height: number): { x: number; y: number; width: number; height: number } {
   const padLeft = width * BOX_PADDING_LEFT;
   const padRight = width * BOX_PADDING_RIGHT;
   const padTop = height * BOX_PADDING_TOP;
