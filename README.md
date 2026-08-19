@@ -1,8 +1,15 @@
 <div align="center">
 
-# 👁️ FaceVision
+<pre align="center">
+███████╗░█████╗░░█████╗░███████╗██╗░░░██╗██╗░██████╗██╗░█████╗░███╗░░██╗
+██╔════╝██╔══██╗██╔══██╗██╔════╝██║░░░██║██║██╔════╝██║██╔══██╗████╗░██║
+█████╗░░███████║██║░░╚═╝█████╗░░╚██╗░██╔╝██║╚█████╗░██║██║░░██║██╔██╗██║
+██╔══╝░░██╔══██║██║░░██╗██╔══╝░░░╚████╔╝░██║░╚═══██╗██║██║░░██║██║╚████║
+██║░░░░░██║░░██║╚█████╔╝███████╗░░╚██╔╝░░██║██████╔╝██║╚█████╔╝██║░╚███║
+╚═╝░░░░░╚═╝░░╚═╝░╚════╝░╚══════╝░░░╚═╝░░░╚═╝╚═════╝░╚═╝░╚════╝░╚═╝░░╚══╝
+</pre>
 
-### Privacy-first face detection that never leaves your browser
+### 👁️ Privacy-first face detection that never leaves your browser
 
 [![CI](https://github.com/Pranjulrathour/FACEVISION-NEXTUPGRAD-/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Pranjulrathour/FACEVISION-NEXTUPGRAD-/actions/workflows/ci.yml)
 ![Next.js](https://img.shields.io/badge/Next.js-16-000000?logo=next.js&logoColor=white)
