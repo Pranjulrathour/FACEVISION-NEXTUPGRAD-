@@ -9,3 +9,7 @@ env/
 build/
 dist/
 .coverage
+
+# Evaluation datasets/results (checklist §4/§22/§23) -- large, regenerable
+# via docs/evaluation-methodology.md, not committed
+evaluation/data/
