@@ -88,7 +88,7 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string)
 }
 
 function isDecodedImageSource(
-  source: HTMLImageElement | HTMLVideoElement
+  source: HTMLImageElement | HTMLVideoElement | HTMLCanvasElement
 ): source is HTMLImageElement {
   return typeof (source as HTMLImageElement).naturalWidth === "number";
 }
@@ -109,7 +109,7 @@ export class FacePipelineError extends Error {
  */
 export async function runDetectionPipeline(
   detector: FaceDetector,
-  source: HTMLImageElement | HTMLVideoElement,
+  source: HTMLImageElement | HTMLVideoElement | HTMLCanvasElement,
   width: number,
   height: number,
   options: DetectionPipelineOptions = {}

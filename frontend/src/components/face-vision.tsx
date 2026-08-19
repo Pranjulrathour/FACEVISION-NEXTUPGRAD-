@@ -49,15 +49,31 @@ function uid(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function sourceDimensions(
+  source: HTMLImageElement | HTMLVideoElement | HTMLCanvasElement
+): { width: number; height: number } {
+  if (source instanceof HTMLVideoElement) {
+    return { width: source.videoWidth, height: source.videoHeight };
+  }
+  if (source instanceof HTMLCanvasElement) {
+    return { width: source.width, height: source.height };
+  }
+  return { width: source.naturalWidth, height: source.naturalHeight };
+}
+
 export function FaceVision() {
   const detector = useRef<YuNetDetector | null>(null);
   const embedder = useRef<SFaceEmbedder | null>(null);
   const antiSpoof = useRef<MiniFASNetClassifier | null>(null);
-  const lastSource = useRef<HTMLImageElement | HTMLVideoElement | null>(null);
+  const lastSource = useRef<HTMLImageElement | HTMLVideoElement | HTMLCanvasElement | null>(null);
   const cameraLiveness = useRef<LivenessHeuristic>(new LivenessHeuristic());
   const stream = useRef<MediaStream | null>(null);
   const video = useRef<HTMLVideoElement | null>(null);
   const canvas = useRef<HTMLCanvasElement | null>(null);
+  /** Offscreen, reused per camera tick — see the scan() comment below for why
+   * detection and drawing must run against one frozen frame, not the live
+   * video twice. */
+  const cameraSnapshot = useRef<HTMLCanvasElement | null>(null);
   const frame = useRef<number | null>(null);
 
   const [mode, setMode] = useState<DetectionMode>("upload");
@@ -282,12 +298,8 @@ export function FaceVision() {
           antiSpoof.current!,
           lastSource.current,
           face.box,
-          lastSource.current instanceof HTMLVideoElement
-            ? lastSource.current.videoWidth
-            : lastSource.current.naturalWidth,
-          lastSource.current instanceof HTMLVideoElement
-            ? lastSource.current.videoHeight
-            : lastSource.current.naturalHeight
+          sourceDimensions(lastSource.current).width,
+          sourceDimensions(lastSource.current).height
         );
         setAntiSpoofResults((prev) => ({ ...prev, [faceIdx]: result }));
         setStatus(
@@ -497,13 +509,37 @@ export function FaceVision() {
           const element = video.current;
           if (element && element.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && !busy) {
             busy = true;
-            lastSource.current = element;
+            // Detection is async (real ONNX inference latency, tens to
+            // hundreds of ms) — the live <video> element keeps playing
+            // during that await, so sampling it a second time for draw()
+            // captures a NEWER frame than the one detect() just analyzed.
+            // For any moving face this shows up as the box trailing behind
+            // reality — reported as the frame looking "deviated" from the
+            // face even though the detection math itself is correct (the
+            // box is exactly right for the frame it was computed from,
+            // just not the frame drawn a beat later). Snapshot once per
+            // tick into a reused offscreen canvas so detect() and draw()
+            // both operate on the identical, frozen frame.
+            const videoWidth = element.videoWidth;
+            const videoHeight = element.videoHeight;
+            if (!cameraSnapshot.current) cameraSnapshot.current = document.createElement("canvas");
+            const snapshot = cameraSnapshot.current;
+            snapshot.width = videoWidth;
+            snapshot.height = videoHeight;
+            const snapshotContext = snapshot.getContext("2d");
+            if (!snapshotContext) {
+              busy = false;
+              frame.current = requestAnimationFrame(scan);
+              return;
+            }
+            snapshotContext.drawImage(element, 0, 0, videoWidth, videoHeight);
+            lastSource.current = snapshot;
             try {
               const { faces: found, liveness } = await runDetectionPipeline(
                 detector.current!,
-                element,
-                element.videoWidth,
-                element.videoHeight,
+                snapshot,
+                videoWidth,
+                videoHeight,
                 {
                   confidenceThreshold: confidence,
                   nmsThreshold: nms,
@@ -513,9 +549,9 @@ export function FaceVision() {
               if (liveness) setLivenessSignal(liveness.signal);
               cameraFailures = 0;
               draw(
-                element,
-                element.videoWidth,
-                element.videoHeight,
+                snapshot,
+                videoWidth,
+                videoHeight,
                 found,
                 selectedFaceIdx,
                 slotIndices
