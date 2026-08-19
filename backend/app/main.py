@@ -7,7 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.core.config import get_settings
-from app.routers import auth, detection, history, stats, face_compare, gallery, health
+from app.core.metrics import record_request
+from app.routers import auth, detection, history, stats, face_compare, gallery, health, metrics
 from app.database import init_db
 
 logger = logging.getLogger("facevision")
@@ -53,6 +54,20 @@ async def log_requests(request: Request, call_next):
         response.status_code,
         duration_ms,
     )
+    # A path-templated key (e.g. "/api/v1/detections/{detection_id}"), not
+    # the literal request path -- otherwise every distinct detection ID
+    # would fragment metrics into its own bucket. Built from path_params
+    # rather than the matched route's own .path, since that reflects the
+    # sub-router's un-prefixed template ("/{detection_id}") in this
+    # FastAPI version's lazy router-inclusion, not the full mounted path.
+    # Falls back to the literal path when nothing matched (404s), capped
+    # in record_request() so that can't grow without bound under scanner
+    # traffic.
+    templated_path = request.url.path
+    for param_name, param_value in (request.scope.get("path_params") or {}).items():
+        templated_path = templated_path.replace(f"/{param_value}", f"/{{{param_name}}}", 1)
+    route_key = f"{request.method} {templated_path}"
+    record_request(route_key, duration_ms, response.status_code)
     return response
 
 
@@ -76,6 +91,7 @@ async def deprecate_unversioned_routes(request: Request, call_next):
 
 for prefix in (API_V1_PREFIX, LEGACY_API_PREFIX):
     app.include_router(health.router, prefix=prefix, tags=["health"])
+    app.include_router(metrics.router, prefix=f"{prefix}/metrics", tags=["metrics"])
     app.include_router(detection.router, prefix=f"{prefix}/detections", tags=["detections"])
     app.include_router(history.router, prefix=f"{prefix}/history", tags=["history"])
     app.include_router(stats.router, prefix=f"{prefix}/stats", tags=["stats"])
