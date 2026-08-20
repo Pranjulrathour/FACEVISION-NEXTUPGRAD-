@@ -143,3 +143,22 @@ describe("api.getMe", () => {
     expect(options.headers.Authorization).toBe("Bearer my-jwt");
   });
 });
+
+describe("register() anonymous session id handling", () => {
+  it("generates a session id, persists it, and sends it as anonymousSessionId", async () => {
+    vi.stubGlobal("window", {});
+    vi.stubGlobal("localStorage", makeFakeLocalStorage());
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse(200, { accessToken: "t", user: { id: "u1", email: "a@b.com", displayName: null } })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.register("a@b.com", "password123");
+
+    const [, options] = fetchMock.mock.calls[0];
+    const body = JSON.parse(options.body);
+    expect(typeof body.anonymousSessionId).toBe("string");
+    expect(body.anonymousSessionId.length).toBeGreaterThan(0);
+    expect(localStorage.getItem("facevision:sessionId")).toBe(body.anonymousSessionId);
+  });
+});
