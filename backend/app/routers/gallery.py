@@ -18,7 +18,12 @@ from app.services import gallery_service
 
 router = APIRouter()
 _enroll_rate_limit = rate_limiter("GALLERY_ENROLL_RATE_LIMIT_PER_MIN", default=15)
-_recognize_rate_limit = rate_limiter("GALLERY_RECOGNIZE_RATE_LIMIT_PER_MIN", default=30)
+# The frontend now auto-recognizes every visible face on a periodic
+# throttle instead of only on a manual click, so a few faces on screen
+# at once can legitimately call this more often than a human clicking
+# a button ever would -- default raised from 30 to keep that from
+# tripping the limiter under normal use.
+_recognize_rate_limit = rate_limiter("GALLERY_RECOGNIZE_RATE_LIMIT_PER_MIN", default=60)
 
 
 def _to_response(entry) -> GalleryEntryResponse:
