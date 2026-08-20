@@ -112,3 +112,15 @@ def test_claim_anonymous_entries_moves_them_to_the_new_scope(db):
     items, total = gallery_service.list_gallery(db, user_session_id="user:abc")
     assert total == 1
     assert items[0].name == "Alice"
+
+
+def test_claim_anonymous_entries_with_no_anonymous_id_is_a_noop(db):
+    assert gallery_service.claim_anonymous_entries(db, None, "user:abc") == 0
+
+
+def test_claiming_twice_is_idempotent(db):
+    gallery_service.enroll_face(db, "Alice", _embedding(1.0), "v1", "anon-session-1")
+    first = gallery_service.claim_anonymous_entries(db, "anon-session-1", "user:abc")
+    second = gallery_service.claim_anonymous_entries(db, "anon-session-1", "user:abc")
+    assert first == 1
+    assert second == 0
