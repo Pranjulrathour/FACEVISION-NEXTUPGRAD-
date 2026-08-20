@@ -61,6 +61,39 @@ describe("api.register", () => {
   });
 });
 
+describe("api.login", () => {
+  it("maps a successful response the same way register does", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse(200, {
+          accessToken: "tok2",
+          user: { id: "u2", email: "b@c.com", displayName: null },
+          claimedGalleryEntries: 1,
+        })
+      )
+    );
+    const result = await api.login("b@c.com", "password123");
+    expect(result).toEqual({
+      ok: true,
+      data: {
+        token: "tok2",
+        user: { id: "u2", email: "b@c.com", displayName: null },
+        claimedGalleryEntries: 1,
+      },
+    });
+  });
+
+  it("surfaces a 401 for wrong credentials", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse(401, { detail: "Invalid email or password" }))
+    );
+    const result = await api.login("b@c.com", "wrong");
+    expect(result).toEqual({ ok: false, status: 401, detail: "Invalid email or password" });
+  });
+});
+
 describe("api.getMe", () => {
   it("returns ok:true with the user on success", async () => {
     vi.stubGlobal(
