@@ -103,3 +103,12 @@ def test_recognize_scoped_to_session_ignores_other_sessions_enrollments(db):
     gallery_service.enroll_face(db, "Alice", _embedding(1.0), "v1", "session-1")
     result = gallery_service.recognize_face(db, _embedding(1.0), "session-2", threshold=0.363)
     assert result.matched is False
+
+
+def test_claim_anonymous_entries_moves_them_to_the_new_scope(db):
+    gallery_service.enroll_face(db, "Alice", _embedding(1.0), "v1", "anon-session-1")
+    claimed = gallery_service.claim_anonymous_entries(db, "anon-session-1", "user:abc")
+    assert claimed == 1
+    items, total = gallery_service.list_gallery(db, user_session_id="user:abc")
+    assert total == 1
+    assert items[0].name == "Alice"
