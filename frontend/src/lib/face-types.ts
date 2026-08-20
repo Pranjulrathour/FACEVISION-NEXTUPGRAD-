@@ -72,6 +72,16 @@ export type RecognitionResult = {
   threshold: number;
 };
 
+/** Live recognition state shown under a detected face box. "checking" is
+ * shown the moment a check starts (so the label never looks frozen);
+ * "unregistered" is a real, terminal result -- distinct from simply not
+ * having checked yet -- so a shown face always ends up with a definite
+ * answer instead of silently staying blank. */
+export type RecognitionLabel =
+  | { status: "checking" }
+  | { status: "matched"; name: string; similarity: number }
+  | { status: "unregistered" };
+
 // v1
 
 // v2
