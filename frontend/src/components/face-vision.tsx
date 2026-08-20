@@ -1,6 +1,7 @@
 "use client";
 
 import { ChangeEvent, DragEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import type {
   Face,
   RuntimeState,
@@ -35,7 +36,13 @@ import {
   getStats as getLocalStats,
 } from "@/lib/storage";
 import { api } from "@/lib/api-client";
-import { clearSession, getStoredSession, storeSession, type AuthSession } from "@/lib/auth-client";
+import {
+  clearSession,
+  consumePendingWelcomeMessage,
+  getStoredSession,
+  storeSession,
+  type AuthSession,
+} from "@/lib/auth-client";
 import type { PanelTab } from "@/lib/panel-types";
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -65,6 +72,7 @@ function sourceDimensions(
 }
 
 export function FaceVision() {
+  const router = useRouter();
   const detector = useRef<YuNetDetector | null>(null);
   const embedder = useRef<SFaceEmbedder | null>(null);
   const antiSpoof = useRef<MiniFASNetClassifier | null>(null);
@@ -83,7 +91,9 @@ export function FaceVision() {
   const [runtime, setRuntime] = useState<RuntimeState>("idle");
   const [engine, setEngine] = useState<string>("");
   const [livenessSignal, setLivenessSignal] = useState<string | null>(null);
-  const [status, setStatus] = useState("Choose an image or start your camera.");
+  const [status, setStatus] = useState(
+    () => consumePendingWelcomeMessage() ?? "Choose an image or start your camera."
+  );
   const [faces, setFaces] = useState<Face[]>([]);
   const [preview, setPreview] = useState<string | null>(null);
   const [processing, setProcessing] = useState(false);
@@ -113,6 +123,12 @@ export function FaceVision() {
   });
 
   const [authSession, setAuthSession] = useState<AuthSession | null>(() => getStoredSession());
+  /** Gates rendering the camera UI until we know the stored session (if
+   * any) is actually still accepted by the backend -- see the mount
+   * effect below. The app requires signing in first, so this starts
+   * false and the guard effect is what flips it true (or bounces to
+   * /login). */
+  const [authChecked, setAuthChecked] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [authEmail, setAuthEmail] = useState("");
@@ -126,6 +142,30 @@ export function FaceVision() {
   useEffect(() => {
     void api.health().then((r) => setApiAvailable(!!r && r.status === "ok"));
   }, []);
+
+  useEffect(() => {
+    if (!authSession) {
+      router.replace("/login");
+      return;
+    }
+    void api.getMe().then((result) => {
+      if (result.ok) {
+        setAuthChecked(true);
+        return;
+      }
+      if (result.status === 401) {
+        // The token is genuinely no good any more (expired/revoked) --
+        // send the user back to sign in.
+        clearSession();
+        setAuthSession(null);
+        router.replace("/login");
+        return;
+      }
+      // Network hiccup or backend error, not an auth rejection -- don't
+      // sign the user out just because the backend blipped once.
+      setAuthChecked(true);
+    });
+  }, [authSession, router]);
 
   useEffect(() => {
     saveSettings(settings);
