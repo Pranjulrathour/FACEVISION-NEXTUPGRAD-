@@ -433,6 +433,17 @@ export function FaceVision() {
         const entry = await api.enrollFace(name.trim(), vector, embedder.current!.modelVersion);
         if (entry) {
           setStatus(`Enrolled "${name.trim()}" (${entry.sampleCount} sample${entry.sampleCount === 1 ? "" : "s"}).`);
+          // Reflect the name immediately rather than waiting for the next
+          // auto-recognition throttle tick -- we already know the answer,
+          // no need to re-ask the backend.
+          const idx = faces.findIndex((f) => deepEqualFace(f, face));
+          if (idx >= 0) {
+            setRecognizedNames((prev) => ({
+              ...prev,
+              [idx]: { status: "matched", name: name.trim(), similarity: 1 },
+            }));
+            recognizeThrottle.current.lastCheckedAt[idx] = Date.now();
+          }
           await refreshGallery();
         } else {
           setStatus("Enrollment failed — backend unavailable or rejected the request.");
@@ -445,7 +456,7 @@ export function FaceVision() {
         setGalleryBusy(false);
       }
     },
-    [prepareEmbedder, refreshGallery]
+    [prepareEmbedder, refreshGallery, faces]
   );
 
   /** Checks one detected face against the gallery and always lands on a
