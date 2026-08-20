@@ -344,8 +344,6 @@ Grouped by path *template* (`{detection_id}`, not the literal ID) so per-record 
 
 | Area | Gap |
 |---|---|
-| Auth UI | Backend fully supports JWT auth; no frontend login/register form yet |
-| Account deletion | No self-service endpoint — requires operator DB access |
 | Rate limiting | In-memory by default; Redis-capable but not provisioned today |
 | Liveness | MiniFASNet + heuristic are real signals but **not wired into any security gate** |
 | Compare vs. Gallery | "Compare" is landmark-geometry similarity, not recognition — Gallery is the real embedding-based path |
