@@ -7,6 +7,7 @@ import type {
   GalleryEntry,
   RecognitionResult,
 } from "./face-types";
+import { getStoredSession, type AuthSession, type AuthUser } from "./auth-client";
 
 const API_BASE =
   (typeof process !== "undefined" && (process as any).env?.NEXT_PUBLIC_API_URL) ||
@@ -34,11 +35,16 @@ function getSessionId(): string {
   return SESSION_ID;
 }
 
+function authHeaders(): Record<string, string> {
+  const session = getStoredSession();
+  return session ? { Authorization: `Bearer ${session.token}` } : {};
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T | null> {
   const url = `${API_BASE}${API_VERSION_SEGMENT}${path}`;
   try {
     const res = await fetch(url, {
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeaders() },
       ...options,
     });
     if (!res.ok) {
@@ -49,6 +55,32 @@ async function request<T>(path: string, options?: RequestInit): Promise<T | null
   } catch (err) {
     console.warn(`[FaceVision API] Network unavailable: ${url}`);
     return null;
+  }
+}
+
+export type AuthRequestResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; status: number; detail: string };
+
+/** Separate from request() above because auth flows need the actual
+ * status/detail to show a useful message ("wrong password" vs "email
+ * already registered" vs "network unavailable") -- request() collapses
+ * every failure into a bare null, which is fine for silent background
+ * syncs but not for a form the user is actively filling in. */
+async function authRequest<T>(path: string, options?: RequestInit): Promise<AuthRequestResult<T>> {
+  const url = `${API_BASE}${API_VERSION_SEGMENT}${path}`;
+  try {
+    const res = await fetch(url, {
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      ...options,
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { ok: false, status: res.status, detail: body?.detail ?? "Request failed" };
+    }
+    return { ok: true, data: body as T };
+  } catch {
+    return { ok: false, status: 0, detail: "Network unavailable" };
   }
 }
 
@@ -158,4 +190,56 @@ export const api = {
       }),
     });
   },
+
+  async register(
+    email: string,
+    password: string,
+    displayName?: string
+  ): Promise<AuthRequestResult<AuthSession>> {
+    const result = await authRequest<{ accessToken: string; user: AuthUser }>("/auth/register", {
+      method: "POST",
+      body: JSON.stringify({ email, password, displayName: displayName || undefined }),
+    });
+    if (!result.ok) return result;
+    return { ok: true, data: { token: result.data.accessToken, user: result.data.user } };
+  },
+
+  async login(email: string, password: string): Promise<AuthRequestResult<AuthSession>> {
+    const result = await authRequest<{ accessToken: string; user: AuthUser }>("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    });
+    if (!result.ok) return result;
+    return { ok: true, data: { token: result.data.accessToken, user: result.data.user } };
+  },
+
+  async deleteAccount(
+    password: string
+  ): Promise<AuthRequestResult<{ deleted: boolean; galleryEntriesDeleted: number }>> {
+    return authRequest("/auth/me", {
+      method: "DELETE",
+      body: JSON.stringify({ password }),
+    });
+  },
+
+  /** Checklist §18 — GET /metrics, per-route latency percentiles and error
+   * rates. See backend/app/core/metrics.py for how these are computed. */
+  async getMetrics(): Promise<MetricsSnapshot | null> {
+    return request<MetricsSnapshot>("/metrics", { method: "GET" });
+  },
+};
+
+export type RouteMetrics = {
+  requestCount: number;
+  errorCount: number;
+  errorRate: number;
+  p50Ms: number;
+  p95Ms: number;
+  p99Ms: number;
+  sampledRequests: number;
+};
+
+export type MetricsSnapshot = {
+  uptimeSeconds: number;
+  routes: Record<string, RouteMetrics>;
 };

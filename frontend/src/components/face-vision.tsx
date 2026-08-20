@@ -33,6 +33,7 @@ import {
   getStats as getLocalStats,
 } from "@/lib/storage";
 import { api } from "@/lib/api-client";
+import { clearSession, getStoredSession, storeSession, type AuthSession } from "@/lib/auth-client";
 import type { PanelTab } from "@/lib/panel-types";
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -102,6 +103,17 @@ export function FaceVision() {
   const [galleryEntries, setGalleryEntries] = useState<GalleryEntry[]>([]);
   const [galleryBusy, setGalleryBusy] = useState(false);
   const [recognizedNames, setRecognizedNames] = useState<Record<number, string>>({});
+
+  const [authSession, setAuthSession] = useState<AuthSession | null>(() => getStoredSession());
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authDisplayName, setAuthDisplayName] = useState("");
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deletePassword, setDeletePassword] = useState("");
 
   useEffect(() => {
     void api.health().then((r) => setApiAvailable(!!r && r.status === "ok"));
@@ -317,6 +329,81 @@ export function FaceVision() {
     },
     [prepareAntiSpoof]
   );
+
+  const openAuthModal = useCallback((initialMode: "login" | "register") => {
+    setAuthMode(initialMode);
+    setAuthEmail("");
+    setAuthPassword("");
+    setAuthDisplayName("");
+    setAuthError(null);
+    setDeleteConfirmOpen(false);
+    setDeletePassword("");
+    setAuthModalOpen(true);
+  }, []);
+
+  const closeAuthModal = useCallback(() => {
+    setAuthModalOpen(false);
+  }, []);
+
+  const submitAuthForm = useCallback(async () => {
+    setAuthError(null);
+    if (!authEmail.trim() || !authPassword) {
+      setAuthError("Email and password are required.");
+      return;
+    }
+    setAuthBusy(true);
+    try {
+      const result =
+        authMode === "register"
+          ? await api.register(authEmail.trim(), authPassword, authDisplayName.trim())
+          : await api.login(authEmail.trim(), authPassword);
+      if (!result.ok) {
+        setAuthError(result.detail);
+        return;
+      }
+      storeSession(result.data);
+      setAuthSession(result.data);
+      setAuthModalOpen(false);
+      setStatus(`Signed in as ${result.data.user.email}. Gallery data now follows your account, not this browser session.`);
+    } finally {
+      setAuthBusy(false);
+    }
+  }, [authMode, authEmail, authPassword, authDisplayName]);
+
+  const logOut = useCallback(() => {
+    clearSession();
+    setAuthSession(null);
+    setAuthModalOpen(false);
+    setStatus("Signed out. Gallery actions now use an anonymous session again.");
+  }, []);
+
+  const confirmDeleteAccount = useCallback(async () => {
+    if (!deletePassword) {
+      setAuthError("Enter your password to confirm.");
+      return;
+    }
+    setAuthBusy(true);
+    setAuthError(null);
+    try {
+      const result = await api.deleteAccount(deletePassword);
+      if (!result.ok) {
+        setAuthError(result.detail);
+        return;
+      }
+      clearSession();
+      setAuthSession(null);
+      setAuthModalOpen(false);
+      setDeleteConfirmOpen(false);
+      setDeletePassword("");
+      setStatus(
+        `Account deleted (${result.data.galleryEntriesDeleted} gallery ${
+          result.data.galleryEntriesDeleted === 1 ? "entry" : "entries"
+        } removed with it).`
+      );
+    } finally {
+      setAuthBusy(false);
+    }
+  }, [deletePassword]);
 
   const refreshGallery = useCallback(async () => {
     const result = await api.listGallery();
@@ -708,8 +795,19 @@ export function FaceVision() {
           <span>◉</span> FaceVision
         </a>
         <p>Private face detection, entirely in your browser.</p>
-        <div className="privacy">
-          {apiAvailable ? "● API synced" : "○ Local-only mode"}
+        <div className="header-right">
+          <div className="privacy">
+            {apiAvailable ? "● API synced" : "○ Local-only mode"}
+          </div>
+          {authSession ? (
+            <button className="ghost-btn" onClick={() => openAuthModal("login")}>
+              {authSession.user.displayName || authSession.user.email}
+            </button>
+          ) : (
+            <button className="ghost-btn" onClick={() => openAuthModal("login")}>
+              Sign in
+            </button>
+          )}
         </div>
       </header>
 
@@ -1261,6 +1359,97 @@ export function FaceVision() {
         <span>Built for privacy-first vision.</span>
         <span>YuNet · ONNX Runtime Web · {engine || "WebGPU / WASM"}</span>
       </footer>
+
+      {authModalOpen && (
+        <div className="modal-overlay" onClick={closeAuthModal}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="panel-header small">
+              <h4>{authSession ? "Account" : authMode === "login" ? "Sign in" : "Create an account"}</h4>
+              <button className="ghost-btn" onClick={closeAuthModal}>Close</button>
+            </div>
+
+            {authSession ? (
+              <div className="auth-account">
+                <p>
+                  Signed in as <strong>{authSession.user.email}</strong>
+                  {authSession.user.displayName ? ` (${authSession.user.displayName})` : ""}.
+                </p>
+                <p className="muted small">
+                  Gallery enrollments you make now are tied to this account instead of an anonymous
+                  browser session.
+                </p>
+                {!deleteConfirmOpen ? (
+                  <div className="modal-actions">
+                    <button className="ghost-btn" onClick={logOut}>Log out</button>
+                    <button className="danger-btn" onClick={() => setDeleteConfirmOpen(true)}>
+                      Delete account
+                    </button>
+                  </div>
+                ) : (
+                  <div className="auth-form">
+                    <p className="small">
+                      This permanently deletes your account and every gallery identity enrolled under
+                      it. Enter your password to confirm.
+                    </p>
+                    <input
+                      type="password"
+                      placeholder="Password"
+                      value={deletePassword}
+                      onChange={(e) => setDeletePassword(e.target.value)}
+                    />
+                    {authError && <p className="auth-error">{authError}</p>}
+                    <div className="modal-actions">
+                      <button className="ghost-btn" onClick={() => setDeleteConfirmOpen(false)} disabled={authBusy}>
+                        Cancel
+                      </button>
+                      <button className="danger-btn" onClick={confirmDeleteAccount} disabled={authBusy}>
+                        {authBusy ? "Deleting…" : "Permanently delete"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="auth-form">
+                <input
+                  type="email"
+                  placeholder="Email"
+                  value={authEmail}
+                  onChange={(e) => setAuthEmail(e.target.value)}
+                />
+                {authMode === "register" && (
+                  <input
+                    type="text"
+                    placeholder="Display name (optional)"
+                    value={authDisplayName}
+                    onChange={(e) => setAuthDisplayName(e.target.value)}
+                  />
+                )}
+                <input
+                  type="password"
+                  placeholder="Password (min. 8 characters)"
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && void submitAuthForm()}
+                />
+                {authError && <p className="auth-error">{authError}</p>}
+                <button className="primary-btn" onClick={submitAuthForm} disabled={authBusy}>
+                  {authBusy ? "Please wait…" : authMode === "login" ? "Sign in" : "Create account"}
+                </button>
+                <button
+                  className="ghost-btn"
+                  onClick={() => {
+                    setAuthMode(authMode === "login" ? "register" : "login");
+                    setAuthError(null);
+                  }}
+                >
+                  {authMode === "login" ? "Need an account? Register" : "Already have an account? Sign in"}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
