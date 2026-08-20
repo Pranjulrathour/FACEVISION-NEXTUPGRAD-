@@ -168,6 +168,74 @@ def test_delete_account_also_removes_the_users_gallery_entries(client):
     assert response.json()["galleryEntriesDeleted"] == 1
 
 
+def test_register_claims_gallery_entries_enrolled_under_the_given_anonymous_session(client):
+    anon_id = f"anon-{uuid.uuid4().hex[:12]}"
+    client.post(
+        "/api/v1/gallery/enroll",
+        json={"name": "Pre-signup face", "embedding": [0.5] * 128, "userSessionId": anon_id},
+    )
+    response = client.post(
+        "/api/v1/auth/register",
+        json={"email": _email(), "password": "correct-password-123", "anonymousSessionId": anon_id},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["claimedGalleryEntries"] == 1
+
+    gallery_response = client.get(
+        "/api/v1/gallery", headers={"Authorization": f"Bearer {body['accessToken']}"}
+    )
+    assert gallery_response.json()["total"] == 1
+    assert gallery_response.json()["items"][0]["name"] == "Pre-signup face"
+
+
+def test_register_without_anonymous_session_id_claims_nothing(client):
+    response = client.post(
+        "/api/v1/auth/register", json={"email": _email(), "password": "correct-password-123"}
+    )
+    assert response.status_code == 200
+    assert response.json()["claimedGalleryEntries"] == 0
+
+
+def test_login_claims_gallery_entries_enrolled_under_the_given_anonymous_session(client):
+    email = _email()
+    client.post("/api/v1/auth/register", json={"email": email, "password": "correct-password-123"})
+
+    anon_id = f"anon-{uuid.uuid4().hex[:12]}"
+    client.post(
+        "/api/v1/gallery/enroll",
+        json={"name": "Enrolled before logging back in", "embedding": [0.6] * 128, "userSessionId": anon_id},
+    )
+    response = client.post(
+        "/api/v1/auth/login",
+        json={"email": email, "password": "correct-password-123", "anonymousSessionId": anon_id},
+    )
+    assert response.status_code == 200
+    assert response.json()["claimedGalleryEntries"] == 1
+
+
+def test_claiming_never_touches_another_users_gallery_entries(client):
+    victim_anon_id = f"anon-{uuid.uuid4().hex[:12]}"
+    client.post(
+        "/api/v1/gallery/enroll",
+        json={"name": "Someone else's face", "embedding": [0.7] * 128, "userSessionId": victim_anon_id},
+    )
+
+    attacker_response = client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": _email(),
+            "password": "correct-password-123",
+            "anonymousSessionId": f"anon-{uuid.uuid4().hex[:12]}",
+        },
+    )
+    attacker_token = attacker_response.json()["accessToken"]
+    attacker_gallery = client.get(
+        "/api/v1/gallery", headers={"Authorization": f"Bearer {attacker_token}"}
+    )
+    assert attacker_gallery.json()["total"] == 0
+
+
 def test_delete_account_with_wrong_password_does_not_touch_gallery_entries(client):
     """The password check must happen before any cleanup -- a rejected
     deletion request should leave the account's data fully intact, not
