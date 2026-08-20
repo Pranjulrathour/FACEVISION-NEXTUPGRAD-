@@ -43,7 +43,10 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
     token = create_access_token(user.id)
-    return TokenResponse(accessToken=token, user=_to_user_response(user))
+    claimed = gallery_service.claim_anonymous_entries(
+        db, payload.anonymousSessionId, resolve_scope_id(None, user)
+    )
+    return TokenResponse(accessToken=token, user=_to_user_response(user), claimedGalleryEntries=claimed)
 
 
 @router.get("/me", response_model=UserResponse)
