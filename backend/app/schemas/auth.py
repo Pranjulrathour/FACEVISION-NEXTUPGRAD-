@@ -37,3 +37,4 @@ class TokenResponse(BaseModel):
     accessToken: str
     tokenType: str = "bearer"
     user: UserResponse
+    claimedGalleryEntries: int = 0
