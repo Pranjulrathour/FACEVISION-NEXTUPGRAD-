@@ -289,8 +289,8 @@ All configuration centralized in [`backend/app/core/config.py`](backend/app/core
 
 | Suite | Coverage |
 |---|---|
-| 🧪 Frontend unit tests | **116** tests — detection, alignment, embedding, anti-spoofing, pipeline |
-| 🧪 Backend unit tests | **122** tests — auth, gallery isolation, rate limiting, metrics, adversarial security |
+| 🧪 Frontend unit tests | **130** tests — detection, alignment, embedding, anti-spoofing, pipeline, auto-recognition throttle |
+| 🧪 Backend unit tests | **134** tests — auth, gallery isolation, anonymous-gallery claim-on-signup, rate limiting, metrics, adversarial security |
 | 🎯 Accuracy | 96.9% SFace verification accuracy, measured against 2200 real LFW pairs |
 | 🩹 Memory soak | 170 detection cycles / 14 min against live prod — no leak found |
 | 🔥 Load test | Run against production — found & fixed a real schema-drift bug in the process |
