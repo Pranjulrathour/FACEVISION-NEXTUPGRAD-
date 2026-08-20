@@ -59,11 +59,30 @@ describe("auth-client session storage", () => {
   });
 });
 
+describe("pending welcome message handoff", () => {
+  it("returns null when nothing is pending", () => {
+    expect(consumePendingWelcomeMessage()).toBeNull();
+  });
+
+  it("round-trips a pending message", () => {
+    setPendingWelcomeMessage("2 saved faces were linked to your account.");
+    expect(consumePendingWelcomeMessage()).toBe("2 saved faces were linked to your account.");
+  });
+
+  it("clears the message after consuming it once", () => {
+    setPendingWelcomeMessage("hello");
+    consumePendingWelcomeMessage();
+    expect(consumePendingWelcomeMessage()).toBeNull();
+  });
+});
+
 describe("auth-client outside a browser environment", () => {
   it("no-ops instead of throwing when window is undefined", () => {
     vi.stubGlobal("window", undefined);
     expect(getStoredSession()).toBeNull();
     expect(() => storeSession({ token: "t", user: { id: "u1", email: "a@b.com", displayName: null } })).not.toThrow();
     expect(() => clearSession()).not.toThrow();
+    expect(() => setPendingWelcomeMessage("hello")).not.toThrow();
+    expect(consumePendingWelcomeMessage()).toBeNull();
   });
 });
