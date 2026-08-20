@@ -236,6 +236,18 @@ def test_claiming_never_touches_another_users_gallery_entries(client):
     assert attacker_gallery.json()["total"] == 0
 
 
+def test_register_rejects_an_anonymous_session_id_over_200_chars(client):
+    response = client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": _email(),
+            "password": "correct-password-123",
+            "anonymousSessionId": "a" * 201,
+        },
+    )
+    assert response.status_code == 422
+
+
 def test_delete_account_with_wrong_password_does_not_touch_gallery_entries(client):
     """The password check must happen before any cleanup -- a rejected
     deletion request should leave the account's data fully intact, not
