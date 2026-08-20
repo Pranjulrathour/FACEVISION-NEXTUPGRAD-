@@ -25,6 +25,7 @@ import {
   FacePipelineError,
 } from "@/lib/face-pipeline";
 import { LivenessHeuristic } from "@/lib/liveness";
+import { shouldAutoRecognize } from "@/lib/recognition-throttle";
 import {
   saveDetection as saveLocal,
   getHistory as getLocalHistory,
@@ -685,6 +686,16 @@ export function FaceVision() {
               setFaces(found);
               refreshEngine();
               const now = Date.now();
+              // Live camera mode: re-check each visible face on a throttle
+              // (see shouldAutoRecognize) rather than every tick, so a face
+              // that stays on screen gets labeled without hammering the
+              // backend at animation-frame rate.
+              found.forEach((face, idx) => {
+                const throttleState = recognizeThrottle.current;
+                if (shouldAutoRecognize(now, throttleState.lastCheckedAt[idx], throttleState.inFlight.has(idx))) {
+                  void runRecognitionCheck(face, idx, { silent: true });
+                }
+              });
               if (found.length > 0 && now - lastPersistAt > 5000) {
                 persistCurrent(found);
                 lastPersistAt = now;
@@ -713,7 +724,7 @@ export function FaceVision() {
         }
       }
     },
-    [draw, prepareDetector, refreshEngine, stopCamera, persistCurrent, selectedFaceIdx, slotIndices]
+    [draw, prepareDetector, refreshEngine, stopCamera, persistCurrent, selectedFaceIdx, slotIndices, runRecognitionCheck]
   );
 
   useEffect(() => () => {
