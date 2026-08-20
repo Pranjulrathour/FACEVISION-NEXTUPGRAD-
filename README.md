@@ -410,6 +410,7 @@ Full guides: [`deployment/deployment.md`](deployment/deployment.md) · [`deploym
 - [0003 · MiniFASNet + JWT auth](docs/adr/0003-minifasnet-liveness-and-jwt-auth.md)
 - [0004 · Self-healing migrations](docs/adr/0004-self-healing-column-migrations.md)
 - [0005 · Redis rate limiter fallback](docs/adr/0005-redis-backed-rate-limiter-with-fallback.md)
+- [0006 · Mandatory auth gate + gallery claim](docs/adr/0006-mandatory-auth-gate-and-gallery-claim.md)
 
 </td>
 <td>
