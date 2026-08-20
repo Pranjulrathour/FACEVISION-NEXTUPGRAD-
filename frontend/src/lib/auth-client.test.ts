@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { clearSession, getStoredSession, storeSession } from "./auth-client";
+import {
+  clearSession,
+  consumePendingWelcomeMessage,
+  getStoredSession,
+  setPendingWelcomeMessage,
+  storeSession,
+} from "./auth-client";
 
 /**
  * Vitest's default environment is Node, not jsdom -- there is no real
