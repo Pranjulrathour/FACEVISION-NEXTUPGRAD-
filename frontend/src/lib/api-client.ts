@@ -62,6 +62,11 @@ export type AuthRequestResult<T> =
   | { ok: true; data: T }
   | { ok: false; status: number; detail: string };
 
+/** What register()/login() resolve to on success -- the session to store,
+ * plus how many pre-login, anonymously-enrolled gallery entries this call
+ * just claimed onto the account (0 most of the time). */
+export type AuthLoginResult = AuthSession & { claimedGalleryEntries: number };
+
 /** Separate from request() above because auth flows need the actual
  * status/detail to show a useful message ("wrong password" vs "email
  * already registered" vs "network unavailable") -- request() collapses
@@ -195,13 +200,29 @@ export const api = {
     email: string,
     password: string,
     displayName?: string
-  ): Promise<AuthRequestResult<AuthSession>> {
-    const result = await authRequest<{ accessToken: string; user: AuthUser }>("/auth/register", {
+  ): Promise<AuthRequestResult<AuthLoginResult>> {
+    const result = await authRequest<{
+      accessToken: string;
+      user: AuthUser;
+      claimedGalleryEntries?: number;
+    }>("/auth/register", {
       method: "POST",
-      body: JSON.stringify({ email, password, displayName: displayName || undefined }),
+      body: JSON.stringify({
+        email,
+        password,
+        displayName: displayName || undefined,
+        anonymousSessionId: getSessionId(),
+      }),
     });
     if (!result.ok) return result;
-    return { ok: true, data: { token: result.data.accessToken, user: result.data.user } };
+    return {
+      ok: true,
+      data: {
+        token: result.data.accessToken,
+        user: result.data.user,
+        claimedGalleryEntries: result.data.claimedGalleryEntries ?? 0,
+      },
+    };
   },
 
   async login(email: string, password: string): Promise<AuthRequestResult<AuthSession>> {
