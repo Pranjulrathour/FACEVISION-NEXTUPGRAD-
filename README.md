@@ -137,7 +137,7 @@ FACEVISION/
 | 🕐 **History** | Thumbnail timeline of the last 100 detections, click to reload |
 | 📈 **Stats** | KPI cards + 7-day trend chart |
 | ⚖️ **Compare** | Landmark-geometry similarity between two faces, animated match meter |
-| 🗂️ **Gallery** | Enroll a face under a name (real SFace embedding) → recognize it later |
+| 🗂️ **Gallery** | Enroll a face under a name (real SFace embedding) → every future sighting auto-labels as that name or **"Not registered"**, tied to your account |
 | 🕵️ **Check Liveness** | Per-face button running MiniFASNet V2 anti-spoofing, client-side |
 | ⚙️ **Settings** | Toggle history, labels, landmarks, colors, thresholds |
 
