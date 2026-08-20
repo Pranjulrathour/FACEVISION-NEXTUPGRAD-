@@ -46,7 +46,7 @@ YuNet detection, SFace recognition (96.9% verified accuracy on LFW), and MiniFAS
 <td width="33%" valign="top">
 
 ### 🧪 Actually Tested
-230+ automated tests across frontend and backend, a real load test against production that found and fixed a live bug, a 14-minute memory soak test, and an adversarial security suite.
+260+ automated tests across frontend and backend, a real load test against production that found and fixed a live bug, a 14-minute memory soak test, and an adversarial security suite.
 
 </td>
 </tr>
