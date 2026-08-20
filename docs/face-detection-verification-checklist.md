@@ -17,7 +17,7 @@ as the system evolves, don't let it go stale.
 |---|---|---|
 | **1 — Foundation** | §6 §7 §9 §12 §14 §20 | ✅ Done — magic-byte validation, pixel-level blur/lighting checks, inference timeout, `/api/v1` versioning, centralized config |
 | **2 — Recognition** | §2 §5 §10 §28 | ✅ Done — real SFace embeddings + face alignment, enroll/recognize gallery, `BiometricProfiles`-style tables activated |
-| **3 — Security** | §11 §15 §16 §24 | ✅ Done — real MiniFASNet ONNX liveness check, JWT auth + bcrypt with cryptographically-bound gallery scoping, dedicated adversarial security test suite. Frontend auth UI not yet built (tracked gap) |
+| **3 — Security** | §11 §15 §16 §24 | ✅ Done — real MiniFASNet ONNX liveness check, JWT auth + bcrypt with cryptographically-bound gallery scoping, dedicated adversarial security test suite. Frontend auth UI shipped ([ADR 0006](adr/0006-mandatory-auth-gate-and-gallery-claim.md)): sign-in is now mandatory before the camera/gallery screen is reachable |
 | **4 — Measurement** | §4 §13 §22 §23 §25 §33 §36 | ✅ Done — real LFW-based accuracy evaluation (96.9%, ROC AUC 0.994), memory soak test (no leak found), live load test (found and fixed a real production schema-drift bug). Bias/fairness (§25/§33) remains honestly unmeasured — LFW has no demographic labels |
 | **5 — Ops/Governance** | §18 §26 §27 §37 §38 §40–43 | ✅ Done — `GET /metrics` with p50/p95/p99 + error rates per route, Redis-backed rate limiter (opt-in via `REDIS_URL`, in-memory fallback), CONTRIBUTING.md + PR template. No GitHub branch protection enabled (deliberate — solo project, direct-push workflow kept) |
 
