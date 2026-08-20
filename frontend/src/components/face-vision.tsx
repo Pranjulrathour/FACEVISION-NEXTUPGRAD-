@@ -10,6 +10,7 @@ import type {
   StatsSummary,
   AppSettings,
   GalleryEntry,
+  RecognitionLabel,
 } from "@/lib/face-types";
 import { loadImage, validateImage, validateImageSignature } from "@/lib/image";
 import { YuNetDetector } from "@/lib/yunet";
@@ -102,7 +103,13 @@ export function FaceVision() {
   const [antiSpoofResults, setAntiSpoofResults] = useState<Record<number, { label: string; confidence: number }>>({});
   const [galleryEntries, setGalleryEntries] = useState<GalleryEntry[]>([]);
   const [galleryBusy, setGalleryBusy] = useState(false);
-  const [recognizedNames, setRecognizedNames] = useState<Record<number, string>>({});
+  const [recognizedNames, setRecognizedNames] = useState<Record<number, RecognitionLabel>>({});
+  /** Per-face-slot auto-recognition throttle state (see shouldAutoRecognize) --
+   * a ref, not state, since updating it must never trigger a re-render. */
+  const recognizeThrottle = useRef<{ lastCheckedAt: Record<number, number>; inFlight: Set<number> }>({
+    lastCheckedAt: {},
+    inFlight: new Set(),
+  });
 
   const [authSession, setAuthSession] = useState<AuthSession | null>(() => getStoredSession());
   const [authModalOpen, setAuthModalOpen] = useState(false);
@@ -440,26 +447,50 @@ export function FaceVision() {
     [prepareEmbedder, refreshGallery]
   );
 
-  const recognizeFace = useCallback(
-    async (face: Face, faceIdx: number) => {
+  /** Checks one detected face against the gallery and always lands on a
+   * definite label -- "matched" or "unregistered", never left blank --
+   * so a shown face reliably tells the user whether it's recognized.
+   * Shared by the manual "Recognize" button (silent: false, reports
+   * through the status bar) and the automatic per-tick checks below
+   * (silent: true, so a 5s auto-poll doesn't spam the status bar). */
+  const runRecognitionCheck = useCallback(
+    async (face: Face, faceIdx: number, opts?: { silent?: boolean }) => {
+      const silent = opts?.silent ?? false;
       if (!lastSource.current) return;
       if (!(await prepareEmbedder())) return;
-      setGalleryBusy(true);
+      recognizeThrottle.current.inFlight.add(faceIdx);
+      recognizeThrottle.current.lastCheckedAt[faceIdx] = Date.now();
+      setRecognizedNames((prev) => ({ ...prev, [faceIdx]: { status: "checking" } }));
+      if (!silent) setGalleryBusy(true);
       try {
         const vector = await embedFace(embedder.current!, lastSource.current, face.landmarks);
         const result = await api.recognizeFace(vector);
         if (result?.matched && result.name) {
-          setRecognizedNames((prev) => ({ ...prev, [faceIdx]: result.name! }));
-          setStatus(`Recognized as "${result.name}" (${Math.round(result.similarity * 100)}% similarity).`);
+          setRecognizedNames((prev) => ({
+            ...prev,
+            [faceIdx]: { status: "matched", name: result.name!, similarity: result.similarity },
+          }));
+          if (!silent) {
+            setStatus(`Recognized as "${result.name}" (${Math.round(result.similarity * 100)}% similarity).`);
+          }
         } else {
-          setStatus("No match found in the gallery for this face.");
+          setRecognizedNames((prev) => ({ ...prev, [faceIdx]: { status: "unregistered" } }));
+          if (!silent) setStatus("Not registered — no match found in your gallery for this face.");
         }
       } catch (err) {
         console.error("[FaceVision] Recognition failed:", err);
-        const detail = err instanceof Error ? err.message : String(err);
-        setStatus(`Recognition failed — ${detail}.`);
+        setRecognizedNames((prev) => {
+          const next = { ...prev };
+          delete next[faceIdx];
+          return next;
+        });
+        if (!silent) {
+          const detail = err instanceof Error ? err.message : String(err);
+          setStatus(`Recognition failed — ${detail}.`);
+        }
       } finally {
-        setGalleryBusy(false);
+        recognizeThrottle.current.inFlight.delete(faceIdx);
+        if (!silent) setGalleryBusy(false);
       }
     },
     [prepareEmbedder]
@@ -517,8 +548,16 @@ export function FaceVision() {
         );
         setFaces(found);
         setRecognizedNames({});
+        recognizeThrottle.current = { lastCheckedAt: {}, inFlight: new Set() };
         setAntiSpoofResults({});
         persistCurrent(found);
+        // A shown face should always end up labeled "Recognized" or "Not
+        // registered" without the user having to click anything -- one
+        // auto-check per detected face is affordable here since upload
+        // detection runs once per image, not on a repeating timer.
+        found.forEach((face, idx) => {
+          void runRecognitionCheck(face, idx, { silent: true });
+        });
         if (!found.length) {
           setStatus(`No faces detected (${quality.detail})`);
         } else if (quality.code !== "OK") {
@@ -540,7 +579,7 @@ export function FaceVision() {
         setProcessing(false);
       }
     },
-    [draw, prepareDetector, refreshEngine, persistCurrent, selectedFaceIdx, slotIndices]
+    [draw, prepareDetector, refreshEngine, persistCurrent, selectedFaceIdx, slotIndices, runRecognitionCheck]
   );
 
   const selectFile = useCallback(
@@ -963,6 +1002,7 @@ export function FaceVision() {
                 const selected = selectedFaceIdx === i;
                 const inA = compareSlots[0] && deepEqualFace(face, compareSlots[0]);
                 const inB = compareSlots[1] && deepEqualFace(face, compareSlots[1]);
+                const recognition = recognizedNames[i];
                 return (
                   <div
                     key={i}
@@ -975,8 +1015,12 @@ export function FaceVision() {
                     </div>
                     <div className="face-card-meta">
                       <small>Box: {Math.round(face.box.width)} × {Math.round(face.box.height)}</small>
-                      {recognizedNames[i] && (
-                        <small className="recognized-label">Recognized: {recognizedNames[i]}</small>
+                      {recognition && (
+                        <small className={`recognized-label ${recognition.status}`}>
+                          {recognition.status === "matched" && `Recognized: ${recognition.name}`}
+                          {recognition.status === "unregistered" && "Not registered"}
+                          {recognition.status === "checking" && "Checking…"}
+                        </small>
                       )}
                       {antiSpoofResults[i] && (
                         <small className={`liveness-label ${antiSpoofResults[i].label}`}>
@@ -1018,7 +1062,7 @@ export function FaceVision() {
                         disabled={galleryBusy}
                         onClick={(e) => {
                           e.stopPropagation();
-                          void recognizeFace(face, i);
+                          void runRecognitionCheck(face, i, { silent: false });
                         }}
                       >
                         Recognize
