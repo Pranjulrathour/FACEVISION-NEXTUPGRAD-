@@ -245,6 +245,15 @@ export const api = {
     };
   },
 
+  /** Verifies the stored token is still accepted by the backend (checklist
+   * mandatory-login gate) -- distinguishes a real 401 (token expired/
+   * revoked, caller should sign out) from a network hiccup or 5xx (caller
+   * should keep the local session and try again later) by returning the
+   * full AuthRequestResult rather than collapsing every failure to null. */
+  async getMe(): Promise<AuthRequestResult<AuthUser>> {
+    return authRequest<AuthUser>("/auth/me", { method: "GET" });
+  },
+
   async deleteAccount(
     password: string
   ): Promise<AuthRequestResult<{ deleted: boolean; galleryEntriesDeleted: number }>> {
