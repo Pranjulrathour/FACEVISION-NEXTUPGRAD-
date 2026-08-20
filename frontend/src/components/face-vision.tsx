@@ -889,6 +889,14 @@ export function FaceVision() {
     else setStats(getLocalStats());
   }
 
+  if (!authChecked) {
+    return (
+      <main className="auth-checking">
+        <p>Checking your session…</p>
+      </main>
+    );
+  }
+
   return (
     <div className="shell">
       <header>
