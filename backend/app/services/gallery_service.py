@@ -66,6 +66,22 @@ def delete_gallery_entry(db: Session, entry_id: int, user_session_id: Optional[s
     return True
 
 
+def delete_all_entries_for_scope(db: Session, user_session_id: str) -> int:
+    """Bulk delete every gallery entry scoped to `user_session_id` (used
+    for account deletion -- checklist §15/§16 "right to be forgotten" for
+    an authenticated user's enrolled identities). A bulk query.delete()
+    skips the ORM-level cascade on FaceGalleryEntry.samples, but the
+    gallery_face_samples.gallery_id FK already has ondelete="CASCADE" at
+    the database level, so samples are still removed."""
+    deleted = (
+        db.query(FaceGalleryEntry)
+        .filter(FaceGalleryEntry.user_session_id == user_session_id)
+        .delete(synchronize_session=False)
+    )
+    db.commit()
+    return deleted
+
+
 @dataclass
 class RecognitionResult:
     matched: bool

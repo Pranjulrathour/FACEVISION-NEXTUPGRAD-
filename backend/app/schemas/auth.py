@@ -15,6 +15,15 @@ class LoginRequest(BaseModel):
     password: str = Field(..., min_length=1, max_length=128)
 
 
+class DeleteAccountRequest(BaseModel):
+    """Requires re-entering the password rather than relying on the bearer
+    token alone -- a destructive, irreversible action shouldn't go through
+    on a stolen/leaked token without the caller proving they still know
+    the password, the same way most real account-deletion flows work."""
+
+    password: str = Field(..., min_length=1, max_length=128)
+
+
 class UserResponse(BaseModel):
     id: str
     email: str

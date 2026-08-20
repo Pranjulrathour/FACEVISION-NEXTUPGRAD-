@@ -96,3 +96,91 @@ def test_register_rejects_invalid_email(client):
         "/api/v1/auth/register", json={"email": "not-an-email", "password": "password-123"}
     )
     assert response.status_code == 422
+
+
+def _register_and_login(client) -> tuple[str, str]:
+    email = _email()
+    response = client.post(
+        "/api/v1/auth/register", json={"email": email, "password": "correct-password-123"}
+    )
+    body = response.json()
+    return f"Bearer {body['accessToken']}", email
+
+
+def _delete_me(client, auth_header: str | None, password: str):
+    """TestClient.delete() doesn't accept a json body in this
+    httpx/starlette version -- DELETE requests need a body here (the
+    password confirmation), so go through .request() directly."""
+    headers = {"Authorization": auth_header} if auth_header else {}
+    return client.request("DELETE", "/api/v1/auth/me", json={"password": password}, headers=headers)
+
+
+def test_delete_account_requires_authentication(client):
+    response = _delete_me(client, None, "anything")
+    assert response.status_code == 401
+
+
+def test_delete_account_with_wrong_password_returns_401_and_keeps_the_account(client):
+    auth_header, email = _register_and_login(client)
+
+    response = _delete_me(client, auth_header, "wrong-password")
+    assert response.status_code == 401
+
+    # Account must still exist -- login should still work.
+    login_response = client.post(
+        "/api/v1/auth/login", json={"email": email, "password": "correct-password-123"}
+    )
+    assert login_response.status_code == 200
+
+
+def test_delete_account_with_correct_password_deletes_it(client):
+    auth_header, email = _register_and_login(client)
+
+    response = _delete_me(client, auth_header, "correct-password-123")
+    assert response.status_code == 200
+    assert response.json()["deleted"] is True
+
+    # Same token must no longer work, and the email is free to re-register.
+    me_response = client.get("/api/v1/auth/me", headers={"Authorization": auth_header})
+    assert me_response.status_code == 401
+
+    login_response = client.post(
+        "/api/v1/auth/login", json={"email": email, "password": "correct-password-123"}
+    )
+    assert login_response.status_code == 401
+
+    reregister_response = client.post(
+        "/api/v1/auth/register", json={"email": email, "password": "a-new-password-123"}
+    )
+    assert reregister_response.status_code == 200
+
+
+def test_delete_account_also_removes_the_users_gallery_entries(client):
+    auth_header, _ = _register_and_login(client)
+    client.post(
+        "/api/v1/gallery/enroll",
+        json={"name": "Soon to be deleted", "embedding": [0.3] * 128},
+        headers={"Authorization": auth_header},
+    )
+
+    response = _delete_me(client, auth_header, "correct-password-123")
+    assert response.status_code == 200
+    assert response.json()["galleryEntriesDeleted"] == 1
+
+
+def test_delete_account_with_wrong_password_does_not_touch_gallery_entries(client):
+    """The password check must happen before any cleanup -- a rejected
+    deletion request should leave the account's data fully intact, not
+    partially wiped."""
+    auth_header, _ = _register_and_login(client)
+    client.post(
+        "/api/v1/gallery/enroll",
+        json={"name": "Should survive", "embedding": [0.4] * 128},
+        headers={"Authorization": auth_header},
+    )
+
+    failed = _delete_me(client, auth_header, "wrong-password")
+    assert failed.status_code == 401
+
+    list_response = client.get("/api/v1/gallery", headers={"Authorization": auth_header})
+    assert list_response.json()["total"] == 1
