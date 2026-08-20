@@ -381,9 +381,12 @@ the old unversioned `/api/...` prefix for backward compatibility (see
   ([core/auth.py](../backend/app/core/auth.py), [routers/auth.py](../backend/app/routers/auth.py)) —
   see [ADR 0003](adr/0003-minifasnet-liveness-and-jwt-auth.md). The old shared `API_KEY` gate is
   unchanged and still governs write/destructive endpoints independently of user auth.
-- [~] No frontend login/register UI wired up yet — the backend fully supports auth via direct
-  API calls (register → token → `Authorization: Bearer`), but `face-vision.tsx` has no form for
-  it. Tracked gap, not a silent omission.
+- [x] Frontend login/register UI shipped as a dedicated `/login` page
+  ([ADR 0006](adr/0006-mandatory-auth-gate-and-gallery-claim.md)) — signing in is now required
+  before the camera/gallery screen renders at all, not an optional add-on.
+- [x] Self-service account deletion: `DELETE /api/v1/auth/me` re-verifies the password before
+  deleting the account and every gallery entry it owns
+  ([routers/auth.py](../backend/app/routers/auth.py)).
 - [ ] Rate limiter is in-memory, per-process — documented limitation; won't hold across
   multiple backend replicas (README "Known Limitations")
 
