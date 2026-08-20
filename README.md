@@ -255,12 +255,13 @@ All routes versioned under `/api/v1` (canonical). Unversioned `/api/...` paths s
 
 | Method | Route | Description |
 |---|---|---|
-| `POST` | `/auth/register` | Create an account, returns a JWT |
-| `POST` | `/auth/login` | Exchange credentials for a JWT |
+| `POST` | `/auth/register` | Create an account, returns a JWT — also claims any face gallery entries enrolled anonymously in the caller's browser |
+| `POST` | `/auth/login` | Exchange credentials for a JWT — same claim-on-login behavior as register |
 | `GET` | `/auth/me` | Current authenticated user |
+| `DELETE` | `/auth/me` | Self-service account + gallery deletion (requires re-entering the password) |
 | `GET` | `/metrics` | Per-route request counts, error rates, p50/p95/p99 |
 
-A valid `Authorization: Bearer <token>` on gallery endpoints binds that data to the real authenticated user instead of a client-claimed session ID — see [ADR 0003](docs/adr/0003-minifasnet-liveness-and-jwt-auth.md). *(No frontend login form yet — use the API directly.)*
+A valid `Authorization: Bearer <token>` on gallery endpoints binds that data to the real authenticated user instead of a client-claimed session ID — see [ADR 0003](docs/adr/0003-minifasnet-liveness-and-jwt-auth.md). The frontend requires signing in before the camera/gallery screen is reachable at all (`/login`, redirects unauthenticated visitors there automatically).
 
 </details>
 
