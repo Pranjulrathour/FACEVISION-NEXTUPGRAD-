@@ -31,7 +31,10 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     except EmailAlreadyRegisteredError:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
     token = create_access_token(user.id)
-    return TokenResponse(accessToken=token, user=_to_user_response(user))
+    claimed = gallery_service.claim_anonymous_entries(
+        db, payload.anonymousSessionId, resolve_scope_id(None, user)
+    )
+    return TokenResponse(accessToken=token, user=_to_user_response(user), claimedGalleryEntries=claimed)
 
 
 @router.post("/login", response_model=TokenResponse, dependencies=[Depends(_auth_rate_limit)])
