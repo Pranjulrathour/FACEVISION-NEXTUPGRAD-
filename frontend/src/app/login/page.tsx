@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { getStoredSession } from "@/lib/auth-client";
+import { api } from "@/lib/api-client";
+import { getStoredSession, setPendingWelcomeMessage, storeSession } from "@/lib/auth-client";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -17,6 +18,33 @@ export default function LoginPage() {
   useEffect(() => {
     if (getStoredSession()) router.replace("/");
   }, [router]);
+
+  const submit = async () => {
+    setError(null);
+    if (!email.trim() || !password) {
+      setError("Email and password are required.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const result =
+        mode === "register"
+          ? await api.register(email.trim(), password, displayName.trim())
+          : await api.login(email.trim(), password);
+      if (!result.ok) {
+        setError(result.detail);
+        return;
+      }
+      storeSession({ token: result.data.token, user: result.data.user });
+      if (result.data.claimedGalleryEntries > 0) {
+        const n = result.data.claimedGalleryEntries;
+        setPendingWelcomeMessage(`${n} saved face${n === 1 ? "" : "s"} from this browser ${n === 1 ? "is" : "are"} now linked to your account.`);
+      }
+      router.replace("/");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <main className="auth-page">
@@ -51,9 +79,10 @@ export default function LoginPage() {
             placeholder="Password (min. 8 characters)"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && void submit()}
           />
           {error && <p className="auth-error">{error}</p>}
-          <button className="primary-btn" disabled={busy}>
+          <button className="primary-btn" onClick={submit} disabled={busy}>
             {busy ? "Please wait…" : mode === "login" ? "Sign in" : "Create account"}
           </button>
           <button
