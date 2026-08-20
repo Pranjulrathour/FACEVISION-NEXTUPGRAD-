@@ -41,7 +41,11 @@ optionally persisted, and only when the user takes an explicit action.
   identically as "not authenticated" — it never crashes or leaks which case occurred.
 - An optional display name (`users.display_name`), chosen freely by the user.
 - This only happens on an explicit "register" action against `POST /api/v1/auth/register`; it
-  is never automatic, and using the app's detection/gallery features does not require an account.
+  is never automatic. **As of [ADR 0006](adr/0006-mandatory-auth-gate-and-gallery-claim.md), an
+  account is required to use the app at all** — the camera/upload/gallery screen is not reachable
+  without signing in first. If the same browser had already enrolled gallery entries
+  anonymously before this change, those entries are reassigned to the new/existing account at
+  register or login time rather than left behind — nothing is silently duplicated or discarded.
 - Once logged in, a signed JWT (issued by the backend, stored client-side by whatever the caller
   chooses — no browser storage mechanism is imposed by the API itself) is used to authenticate
   subsequent requests. The token contains only the user's internal id and an expiry timestamp —
