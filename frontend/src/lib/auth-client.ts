@@ -41,3 +41,21 @@ export function clearSession(): void {
   if (typeof window === "undefined") return;
   localStorage.removeItem(STORAGE_KEY);
 }
+
+const WELCOME_KEY = "facevision:pendingWelcome";
+
+/** One-shot handoff from /login to the home screen: the login page sets
+ * this right before redirecting (so a message like "3 saved faces were
+ * linked to your account" survives the navigation), and the home screen
+ * consumes-and-clears it on mount. */
+export function setPendingWelcomeMessage(message: string): void {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(WELCOME_KEY, message);
+}
+
+export function consumePendingWelcomeMessage(): string | null {
+  if (typeof window === "undefined") return null;
+  const message = localStorage.getItem(WELCOME_KEY);
+  if (message) localStorage.removeItem(WELCOME_KEY);
+  return message;
+}
