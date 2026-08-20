@@ -1,5 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "./api-client";
+import { storeSession } from "./auth-client";
+
+function makeFakeLocalStorage() {
+  const store = new Map<string, string>();
+  return {
+    getItem: (key: string) => (store.has(key) ? store.get(key)! : null),
+    setItem: (key: string, value: string) => store.set(key, value),
+    removeItem: (key: string) => store.delete(key),
+    clear: () => store.clear(),
+  };
+}
 
 function jsonResponse(status: number, body: unknown) {
   return {
@@ -117,5 +128,18 @@ describe("api.getMe", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network down")));
     const result = await api.getMe();
     expect(result).toEqual({ ok: false, status: 0, detail: "Network unavailable" });
+  });
+
+  it("sends the stored session's bearer token as an Authorization header", async () => {
+    vi.stubGlobal("window", {});
+    vi.stubGlobal("localStorage", makeFakeLocalStorage());
+    storeSession({ token: "my-jwt", user: { id: "u1", email: "a@b.com", displayName: null } });
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { id: "u1", email: "a@b.com", displayName: null }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.getMe();
+
+    const [, options] = fetchMock.mock.calls[0];
+    expect(options.headers.Authorization).toBe("Bearer my-jwt");
   });
 });
