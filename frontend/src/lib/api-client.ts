@@ -225,13 +225,24 @@ export const api = {
     };
   },
 
-  async login(email: string, password: string): Promise<AuthRequestResult<AuthSession>> {
-    const result = await authRequest<{ accessToken: string; user: AuthUser }>("/auth/login", {
+  async login(email: string, password: string): Promise<AuthRequestResult<AuthLoginResult>> {
+    const result = await authRequest<{
+      accessToken: string;
+      user: AuthUser;
+      claimedGalleryEntries?: number;
+    }>("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ email, password, anonymousSessionId: getSessionId() }),
     });
     if (!result.ok) return result;
-    return { ok: true, data: { token: result.data.accessToken, user: result.data.user } };
+    return {
+      ok: true,
+      data: {
+        token: result.data.accessToken,
+        user: result.data.user,
+        claimedGalleryEntries: result.data.claimedGalleryEntries ?? 0,
+      },
+    };
   },
 
   async deleteAccount(
