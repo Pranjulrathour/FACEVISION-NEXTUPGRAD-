@@ -145,20 +145,45 @@ describe("api.getMe", () => {
 });
 
 describe("register() anonymous session id handling", () => {
-  it("generates a session id, persists it, and sends it as anonymousSessionId", async () => {
+  // getSessionId() caches its result in a module-level variable for the
+  // life of the module -- reset the module registry and re-import fresh
+  // for each case here, otherwise whichever case runs first "wins" the
+  // cache for the rest of the file (a real bug caught while writing the
+  // second case below: it kept observing the first case's generated id).
+  async function freshApi() {
+    vi.resetModules();
     vi.stubGlobal("window", {});
     vi.stubGlobal("localStorage", makeFakeLocalStorage());
+    return (await import("./api-client")).api;
+  }
+
+  it("generates a session id, persists it, and sends it as anonymousSessionId", async () => {
+    const freshedApi = await freshApi();
     const fetchMock = vi.fn().mockResolvedValue(
       jsonResponse(200, { accessToken: "t", user: { id: "u1", email: "a@b.com", displayName: null } })
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    await api.register("a@b.com", "password123");
+    await freshedApi.register("a@b.com", "password123");
 
     const [, options] = fetchMock.mock.calls[0];
     const body = JSON.parse(options.body);
     expect(typeof body.anonymousSessionId).toBe("string");
     expect(body.anonymousSessionId.length).toBeGreaterThan(0);
     expect(localStorage.getItem("facevision:sessionId")).toBe(body.anonymousSessionId);
+  });
+
+  it("reuses an existing session id across calls instead of regenerating it", async () => {
+    const freshedApi = await freshApi();
+    localStorage.setItem("facevision:sessionId", "already-there");
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse(200, { accessToken: "t", user: { id: "u1", email: "a@b.com", displayName: null } })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await freshedApi.login("a@b.com", "password123");
+
+    const [, options] = fetchMock.mock.calls[0];
+    expect(JSON.parse(options.body).anonymousSessionId).toBe("already-there");
   });
 });
