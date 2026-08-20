@@ -82,6 +82,25 @@ def delete_all_entries_for_scope(db: Session, user_session_id: str) -> int:
     return deleted
 
 
+def claim_anonymous_entries(db: Session, anonymous_session_id: Optional[str], new_scope_id: str) -> int:
+    """Reassign every gallery entry enrolled under `anonymous_session_id`
+    (a browser's pre-login session id) to `new_scope_id` (the account's
+    "user:{id}" scope) -- called right after register/login so faces
+    someone enrolled before creating an account aren't orphaned once
+    the app requires signing in. Idempotent: once claimed, the
+    anonymous id has no more matching rows, so calling this again is a
+    harmless no-op."""
+    if not anonymous_session_id or anonymous_session_id == new_scope_id:
+        return 0
+    claimed = (
+        db.query(FaceGalleryEntry)
+        .filter(FaceGalleryEntry.user_session_id == anonymous_session_id)
+        .update({FaceGalleryEntry.user_session_id: new_scope_id}, synchronize_session=False)
+    )
+    db.commit()
+    return claimed
+
+
 @dataclass
 class RecognitionResult:
     matched: bool
