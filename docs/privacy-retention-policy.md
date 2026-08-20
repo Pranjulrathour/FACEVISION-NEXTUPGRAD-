@@ -101,9 +101,11 @@ an operator runs the retention-purge script. As of this update, retention is enf
   that silently expires. If you want gallery entries to also expire automatically, that's a
   gap to fill, not something the current purge script does.
 
-**User accounts are not covered by `RETENTION_DAYS`** either — an account persists indefinitely
-until deleted by an operator directly against the database (there is currently no
-self-service "delete my account" endpoint; this is a tracked gap, not a design decision).
+**User accounts are not covered by `RETENTION_DAYS`** — an account persists indefinitely until
+explicitly deleted. Unlike gallery entries, this **is** self-service:
+`DELETE /api/v1/auth/me` deletes the account and every gallery identity enrolled under it in one
+step, after re-verifying the password (a wrong password leaves the account and its data fully
+intact — see `test_auth_router.py`).
 
 ## How is it deleted?
 
