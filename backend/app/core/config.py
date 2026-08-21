@@ -41,7 +41,6 @@ class Settings(BaseSettings):
     # per-call without needing a fresh Settings instance.
     api_key: Optional[str] = None
     detections_rate_limit_per_min: int = 30
-    compare_rate_limit_per_min: int = 30
 
     # Retention: None/0 means "no automatic purge" so existing deployments
     # don't suddenly start deleting data just by upgrading.

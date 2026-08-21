@@ -1,5 +1,5 @@
 """End-to-end integration test: exercise the full HTTP pipeline —
-create → retrieve → list → stats → compare → clear — against a real
+create → retrieve → list → stats → clear — against a real
 database connection (whatever DATABASE_URL/CI's Postgres service provides),
 not mocks.
 
@@ -105,18 +105,6 @@ def test_duplicate_detection_id_is_rejected(client, created_detection):
 
     duplicate_response = client.post("/api/detections", json=payload)
     assert duplicate_response.status_code == 400
-
-
-def test_compare_endpoint_full_pipeline(client):
-    face = _sample_payload(_unique_id())["faces"][0]
-    response = client.post(
-        "/api/compare",
-        json={"faceA": face, "faceB": face, "threshold": 0.5},
-    )
-    assert response.status_code == 200
-    body = response.json()
-    assert body["isMatch"] is True
-    assert body["similarity"] == pytest.approx(1.0)
 
 
 def test_history_clear_removes_session_data(client):

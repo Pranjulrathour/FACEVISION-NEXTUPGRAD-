@@ -3,11 +3,10 @@ from typing import List
 
 
 def cosine_similarity(a: List[float], b: List[float]) -> float:
-    """Shared cosine-similarity helper -- used both for the existing
-    landmark-geometry compare (face_compare_service.py) and for real
-    embedding-vector matching (gallery_service.py). Kept dependency-free
-    (no numpy) since vectors here are small (a handful to 128 dimensions)
-    and this app doesn't otherwise need a numerical library."""
+    """Shared cosine-similarity helper -- used for real embedding-vector
+    matching (gallery_service.py). Kept dependency-free (no numpy) since
+    vectors here are small (a handful to 128 dimensions) and this app
+    doesn't otherwise need a numerical library."""
     if len(a) != len(b) or not a:
         return 0.0
     dot = sum(x * y for x, y in zip(a, b))

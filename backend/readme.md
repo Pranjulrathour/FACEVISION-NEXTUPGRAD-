@@ -29,18 +29,15 @@ backend/
 │   ├── schemas/                # Pydantic request/response models
 │   ├── services/
 │   │   ├── detection_service.py
-│   │   ├── stats_service.py
-│   │   └── face_compare_service.py
+│   │   └── stats_service.py
 │   └── routers/
 │       ├── health.py           # /api/health, /api/ping
 │       ├── detection.py        # CRUD /api/detections
 │       ├── history.py          # alias + clear /api/history
-│       ├── stats.py            # /api/stats
-│       └── face_compare.py     # /api/compare
+│       └── stats.py            # /api/stats
 ├── tests/
 │   ├── test_health.py
-│   ├── test_stats_service.py
-│   └── test_face_compare_service.py
+│   └── test_stats_service.py
 ├── run.py                      # uvicorn launcher
 ├── requirements.txt
 └── .env.example
