@@ -4,7 +4,6 @@ from typing import Optional
 
 from app.core.auth import get_current_user_optional, resolve_scope_id
 from app.core.rate_limit import rate_limiter
-from app.core.security import require_api_key
 from app.database import get_db
 from app.models.user import User
 from app.schemas.gallery import (
@@ -39,7 +38,7 @@ def _to_response(entry) -> GalleryEntryResponse:
 @router.post(
     "/enroll",
     response_model=GalleryEntryResponse,
-    dependencies=[Depends(require_api_key), Depends(_enroll_rate_limit)],
+    dependencies=[Depends(_enroll_rate_limit)],
 )
 def enroll(
     payload: EnrollRequest,
@@ -68,7 +67,7 @@ def list_entries(
     return GalleryListResponse(items=[_to_response(e) for e in items], total=total)
 
 
-@router.delete("/{entry_id}", dependencies=[Depends(require_api_key)])
+@router.delete("/{entry_id}")
 def delete_entry(
     entry_id: int,
     userSessionId: Optional[str] = Query(None, alias="userSessionId"),

@@ -107,26 +107,25 @@ class TestMaliciousStringInputs:
 
 
 class TestUnauthorizedAccess:
-    def test_delete_detection_without_api_key_fails_when_key_is_configured(self, client, monkeypatch):
-        monkeypatch.setenv("API_KEY", "expected-secret")
+    """detections/history/gallery write endpoints deliberately don't gate on API_KEY
+    (checklist §15) -- every one of them is called directly by the public frontend, so an
+    "API key" there could never be a real secret; it would have to live in public JS. Gating
+    on it did nothing but break the app for its own users the one time it was tried in
+    production. These tests guard against that regression: if API_KEY happens to be set for
+    some unrelated reason, these routes must still work normally, not 401."""
+
+    def test_delete_detection_works_without_an_api_key_even_if_one_is_configured(self, client, monkeypatch):
+        monkeypatch.setenv("API_KEY", "set-for-an-unrelated-reason")
         response = client.delete("/api/v1/detections/nonexistent-id-doesnt-matter")
-        assert response.status_code == 401
+        assert response.status_code == 404  # reached the real handler, not blocked at 401
 
-    def test_delete_detection_with_wrong_api_key_fails(self, client, monkeypatch):
-        monkeypatch.setenv("API_KEY", "expected-secret")
-        response = client.delete(
-            "/api/v1/detections/nonexistent-id-doesnt-matter",
-            headers={"X-API-Key": "wrong-secret"},
-        )
-        assert response.status_code == 401
-
-    def test_gallery_enroll_without_api_key_fails_when_key_is_configured(self, client, monkeypatch):
-        monkeypatch.setenv("API_KEY", "expected-secret")
+    def test_gallery_enroll_works_without_an_api_key_even_if_one_is_configured(self, client, monkeypatch):
+        monkeypatch.setenv("API_KEY", "set-for-an-unrelated-reason")
         response = client.post(
             "/api/v1/gallery/enroll",
             json={"name": "Someone", "embedding": [0.1] * 128},
         )
-        assert response.status_code == 401
+        assert response.status_code == 200
 
 
 class TestEnumeration:

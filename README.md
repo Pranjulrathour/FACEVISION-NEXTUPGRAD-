@@ -271,7 +271,6 @@ Interactive Swagger UI: `http://localhost:8000/docs`
 
 | Env var | Default | Effect |
 |---|---|---|
-| `API_KEY` | unset | Gates write/destructive endpoints when set |
 | `JWT_SECRET` | ephemeral fallback | HS256 signing key — **set explicitly in production** |
 | `JWT_EXPIRE_MINUTES` | `10080` (7d) | Access token lifetime |
 | `REDIS_URL` | unset (in-memory) | Shares rate-limit budget across replicas when set; falls back gracefully if unreachable — [ADR 0005](docs/adr/0005-redis-backed-rate-limiter-with-fallback.md) |
@@ -346,7 +345,7 @@ Grouped by path *template* (`{detection_id}`, not the literal ID) so per-record 
 | Liveness | MiniFASNet + heuristic are real signals but **not wired into any security gate** |
 | Gallery scale | Linear cosine-similarity scan, no vector index — fine at personal scale |
 | Postgres | Single-node, no replication — back up the volume yourself |
-| `gallery/recognize` | Intentionally not gated behind `API_KEY` (visitors need to use it) — rate-limited instead |
+| Write endpoints (`detections`, `history`, `gallery`) | No API-key gate — every one of these is called directly by the public frontend itself, so an "API key" would have to live in public JS, which isn't a real secret. Protected by rate limiting instead, plus mandatory sign-in for gallery routes |
 
 Full gap analysis and honest production-readiness assessment: [docs/face-detection-verification-checklist.md](docs/face-detection-verification-checklist.md).
 
@@ -375,7 +374,6 @@ flowchart LR
 | Variable | Value |
 |---|---|
 | `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` |
-| `API_KEY` | a real secret |
 | `CORS_ORIGINS` | frontend's public URL |
 | `JWT_SECRET` | a real secret |
 

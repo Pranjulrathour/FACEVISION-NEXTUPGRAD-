@@ -364,10 +364,16 @@ the old unversioned `/api/...` prefix for backward compatibility (see
 
 ## 15. API Security
 
-- [x] Opt-in `API_KEY` gate via `X-API-Key` header on write/destructive endpoints
-  ([core/security.py](../backend/app/core/security.py)) — off by default in dev, must be set
-  in production (documented in README)
-- [x] Per-route, per-IP sliding-window rate limiting on `/api/detections`, `/api/compare`,
+- [x] `API_KEY` gate (`require_api_key`, [core/security.py](../backend/app/core/security.py))
+  **removed** from the write/destructive endpoints (`detections`, `history`, `gallery/enroll`,
+  `gallery/{id}`) that used to carry it — every one of them is called directly by the public
+  frontend, so an API key there could never be a real secret (it would have to live in public
+  JS). Setting `API_KEY` in production per this doc's earlier advice broke those endpoints for
+  the app's own users (401s on detection saves and gallery enrollment) rather than protecting
+  anything. The function itself is still defined and tested for a genuinely admin-only route in
+  the future, just no longer wired to end-user-facing ones. Rate limiting + (for gallery)
+  mandatory sign-in are the real protection now — see §26 below.
+- [x] Per-route, per-IP sliding-window rate limiting on `/api/detections`,
   `/api/gallery/enroll`, `/api/gallery/recognize`, and `/api/auth/*`
   ([core/rate_limit.py](../backend/app/core/rate_limit.py)) — each route has its own isolated
   budget, keyed on `(limiter_id, client_ip)`; a real cross-route budget-sharing bug was found and
@@ -379,8 +385,9 @@ the old unversioned `/api/...` prefix for backward compatibility (see
 - [x] **Real authentication now exists**: JWT bearer tokens (PyJWT HS256) + bcrypt-hashed
   passwords, `POST /api/v1/auth/register`, `POST /api/v1/auth/login`, `GET /api/v1/auth/me`
   ([core/auth.py](../backend/app/core/auth.py), [routers/auth.py](../backend/app/routers/auth.py)) —
-  see [ADR 0003](adr/0003-minifasnet-liveness-and-jwt-auth.md). The old shared `API_KEY` gate is
-  unchanged and still governs write/destructive endpoints independently of user auth.
+  see [ADR 0003](adr/0003-minifasnet-liveness-and-jwt-auth.md). The old shared `API_KEY` gate
+  has since been removed from these endpoints (see §15 above) — real user auth plus rate
+  limiting is the actual protection now, not a secret the public frontend could never keep.
 - [x] Frontend login/register UI shipped as a dedicated `/login` page
   ([ADR 0006](adr/0006-mandatory-auth-gate-and-gallery-claim.md)) — signing in is now required
   before the camera/gallery screen renders at all, not an optional add-on.
@@ -693,7 +700,9 @@ from git history first.
   is still an open follow-up.
 - [x] **Memory testing done (Phase 4)** — 170-cycle soak test against the live deployment; no
   leak found (§13).
-- [x] API authenticated (opt-in `API_KEY`, plus real JWT user accounts as of Phase 3)
+- [x] API authenticated via real JWT user accounts (Phase 3); the earlier opt-in `API_KEY`
+  gate was removed from end-user-facing write endpoints (§15) — it can't be a real secret in a
+  public frontend, and requiring it there only ever broke the app for its own users
 - [x] Rate limiting exists, now Redis-capable for multi-replica deployments (Phase 5, §26)
 - [x] Input validation exists (frontend + backend), including a decompression-bomb guard
 - [x] Biometric retention policy documented and enforceable (`RETENTION_DAYS` + purge script)
@@ -782,9 +791,10 @@ the whole git history.*
 18. **Embeddings stored?** Only if a user explicitly enrolls a face in the Gallery (Phase 2) —
     a 128-d SFace embedding, not landmark coordinates alone. See
     [docs/privacy-retention-policy.md](privacy-retention-policy.md) for what's stored and why.
-19. **Who can access them?** Anyone with the `API_KEY` (if set) can write; anonymous
-    (unauthenticated) reads are still open beyond the client-supplied `userSessionId` filter. For
-    an authenticated caller, access is now cryptographically bound — `resolve_scope_id()`
+19. **Who can access them?** Writes are rate-limited but not API-key-gated (see §15 — an API
+    key can't be a real secret in a public frontend); anonymous (unauthenticated) reads are
+    still open beyond the client-supplied `userSessionId` filter. For an authenticated caller,
+    access is now cryptographically bound — `resolve_scope_id()`
     derives their scope from a verified JWT, not a client-claimed session id (§15/§16).
 20. **Biometric values in logs?** No — verified across every logging call in the codebase.
 21. **Spoofing handled?** Two layers now: the original heuristic (static-image detection via

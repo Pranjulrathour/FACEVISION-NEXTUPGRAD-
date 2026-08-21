@@ -72,11 +72,11 @@ sharing use case for any of these.
   are randomly generated (not sequential/enumerable in practice) but this is **not**
   access-controlled the way a real user-account system would be. Write/destructive endpoints
   (`POST /api/detections`, `DELETE /api/detections/{id}`, `DELETE /api/history`,
-  `POST /api/gallery/enroll`, `DELETE /api/gallery/{id}`) can be gated behind `API_KEY` (see
-  [README.md § Security & rate limiting](../README.md#security--rate-limiting)). Note:
-  `POST /api/gallery/recognize` is intentionally **not** gated behind `API_KEY` (a visitor
-  needs to be able to check a face against the gallery to use the feature at all) — it is
-  rate-limited instead.
+  `POST /api/gallery/enroll`, `DELETE /api/gallery/{id}`) are **not** gated behind an API key —
+  every one of them is called directly by the public frontend itself, so an "API key" would
+  have to live in public JS, which isn't a real secret and would only ever break the app for
+  its own legitimate users (as happened once this was tried). They're rate-limited instead, and
+  gallery routes additionally get real per-account isolation once signed in (see below).
 - **Authenticated users**: if a caller presents a valid JWT (obtained via
   `POST /api/v1/auth/login` or `.../register`), their gallery reads/writes are scoped to their
   real user id — derived from the verified token, not from any client-supplied
