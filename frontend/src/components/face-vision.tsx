@@ -146,6 +146,9 @@ export function FaceVision() {
   const [authBusy, setAuthBusy] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deletePassword, setDeletePassword] = useState("");
+  const [enrollTarget, setEnrollTarget] = useState<Face | null>(null);
+  const [enrollNameInput, setEnrollNameInput] = useState("");
+  const [enrollModalError, setEnrollModalError] = useState<string | null>(null);
 
   useEffect(() => {
     void api.health().then((r) => setApiAvailable(!!r && r.status === "ok"));
@@ -459,22 +462,20 @@ export function FaceVision() {
   }, []);
 
   const enrollFace = useCallback(
-    async (face: Face) => {
+    async (face: Face, name: string) => {
       if (!lastSource.current) {
         setStatus("Run a detection first, then enroll a face.");
         return;
       }
-      const name = window.prompt("Enroll this face as (name):");
-      if (!name || !name.trim()) return;
       if (!(await prepareEmbedder())) return;
       setGalleryBusy(true);
       try {
         const vector = await embedFace(embedder.current!, lastSource.current, face.landmarks);
         const { width, height } = sourceDimensions(lastSource.current);
         const thumbnail = captureFaceThumbnail(lastSource.current, face.box, width, height) ?? undefined;
-        const entry = await api.enrollFace(name.trim(), vector, embedder.current!.modelVersion, thumbnail);
+        const entry = await api.enrollFace(name, vector, embedder.current!.modelVersion, thumbnail);
         if (entry) {
-          setStatus(`Enrolled "${name.trim()}" (${entry.sampleCount} sample${entry.sampleCount === 1 ? "" : "s"}).`);
+          setStatus(`Enrolled "${name}" (${entry.sampleCount} sample${entry.sampleCount === 1 ? "" : "s"}).`);
           // Reflect the name immediately rather than waiting for the next
           // auto-recognition throttle tick -- we already know the answer,
           // no need to re-ask the backend.
@@ -482,24 +483,55 @@ export function FaceVision() {
           if (idx >= 0) {
             setRecognizedNames((prev) => ({
               ...prev,
-              [idx]: { status: "matched", name: name.trim(), similarity: 1 },
+              [idx]: { status: "matched", name, similarity: 1 },
             }));
             recognizeThrottle.current.lastCheckedAt[idx] = Date.now();
           }
           await refreshGallery();
-        } else {
-          setStatus("Enrollment failed — backend unavailable or rejected the request.");
+          return true;
         }
+        setStatus("Enrollment failed — backend unavailable or rejected the request.");
+        return false;
       } catch (err) {
         console.error("[FaceVision] Enrollment failed:", err);
         const detail = err instanceof Error ? err.message : String(err);
         setStatus(`Enrollment failed — ${detail}.`);
+        return false;
       } finally {
         setGalleryBusy(false);
       }
     },
     [prepareEmbedder, refreshGallery, faces]
   );
+
+  const openEnrollModal = useCallback((face: Face) => {
+    setEnrollTarget(face);
+    setEnrollNameInput("");
+    setEnrollModalError(null);
+  }, []);
+
+  const closeEnrollModal = useCallback(() => {
+    setEnrollTarget(null);
+    setEnrollNameInput("");
+    setEnrollModalError(null);
+  }, []);
+
+  const confirmEnroll = useCallback(async () => {
+    if (!enrollTarget) return;
+    const trimmed = enrollNameInput.trim();
+    if (!trimmed) {
+      setEnrollModalError("Enter a name for this identity.");
+      return;
+    }
+    setEnrollModalError(null);
+    const ok = await enrollFace(enrollTarget, trimmed);
+    if (ok) {
+      setEnrollTarget(null);
+      setEnrollNameInput("");
+    } else {
+      setEnrollModalError("Enrollment failed — see status bar below for details.");
+    }
+  }, [enrollTarget, enrollNameInput, enrollFace]);
 
   /** Checks one detected face against the gallery and always lands on a
    * definite label -- "matched" or "unregistered", never left blank --
@@ -1122,10 +1154,10 @@ export function FaceVision() {
                           disabled={galleryBusy}
                           onClick={(e) => {
                             e.stopPropagation();
-                            void enrollFace(face);
+                            openEnrollModal(face);
                           }}
                         >
-                          Save
+                          Enroll
                         </button>
                       )}
                       <button
@@ -1462,6 +1494,38 @@ export function FaceVision() {
                   </div>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {enrollTarget && (
+        <div className="modal-overlay" onClick={closeEnrollModal}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="panel-header small">
+              <h4>Enroll this face</h4>
+              <button className="ghost-btn" onClick={closeEnrollModal}>Close</button>
+            </div>
+
+            <div className="auth-form">
+              <input
+                type="text"
+                placeholder="Name"
+                autoFocus
+                value={enrollNameInput}
+                onChange={(e) => setEnrollNameInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && void confirmEnroll()}
+                disabled={galleryBusy}
+              />
+              {enrollModalError && <p className="auth-error">{enrollModalError}</p>}
+              <div className="modal-actions">
+                <button className="ghost-btn" onClick={closeEnrollModal} disabled={galleryBusy}>
+                  Cancel
+                </button>
+                <button className="primary-btn" onClick={confirmEnroll} disabled={galleryBusy}>
+                  {galleryBusy ? "Saving…" : "Save"}
+                </button>
+              </div>
             </div>
           </div>
         </div>
