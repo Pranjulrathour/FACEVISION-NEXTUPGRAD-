@@ -21,6 +21,11 @@ class EnrollRequest(BaseModel):
     userSessionId: Optional[str] = None
 
 
+class RenameRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    userSessionId: Optional[str] = None
+
+
 class GalleryEntryResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True, protected_namespaces=())
 

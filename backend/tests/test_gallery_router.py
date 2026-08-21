@@ -76,6 +76,45 @@ def test_delete_nonexistent_entry_returns_404(client):
     assert response.status_code == 404
 
 
+def test_rename_entry_updates_the_name(client):
+    session_id = _session_id()
+    enroll_response = client.post(
+        "/api/v1/gallery/enroll",
+        json={"name": "Alice", "embedding": _embedding(1.0), "userSessionId": session_id},
+    )
+    entry_id = enroll_response.json()["id"]
+
+    rename_response = client.patch(
+        f"/api/v1/gallery/{entry_id}",
+        json={"name": "Alicia", "userSessionId": session_id},
+    )
+    assert rename_response.status_code == 200
+    assert rename_response.json()["name"] == "Alicia"
+
+    list_response = client.get("/api/v1/gallery", params={"userSessionId": session_id})
+    assert list_response.json()["items"][0]["name"] == "Alicia"
+
+
+def test_rename_nonexistent_entry_returns_404(client):
+    response = client.patch("/api/v1/gallery/999999999", json={"name": "Anyone"})
+    assert response.status_code == 404
+
+
+def test_rename_rejects_an_empty_name(client):
+    session_id = _session_id()
+    enroll_response = client.post(
+        "/api/v1/gallery/enroll",
+        json={"name": "Alice", "embedding": _embedding(1.0), "userSessionId": session_id},
+    )
+    entry_id = enroll_response.json()["id"]
+
+    response = client.patch(
+        f"/api/v1/gallery/{entry_id}",
+        json={"name": "", "userSessionId": session_id},
+    )
+    assert response.status_code == 422
+
+
 def test_gallery_routes_available_under_legacy_prefix_too(client):
     session_id = _session_id()
     response = client.get("/api/gallery", params={"userSessionId": session_id})
@@ -151,3 +190,25 @@ def test_authenticated_user_cannot_delete_another_users_entry_by_guessing_id(cli
     # Still there when A checks.
     list_as_a = client.get("/api/v1/gallery", headers={"Authorization": auth_a})
     assert any(e["id"] == entry_id for e in list_as_a.json()["items"])
+
+
+def test_authenticated_user_cannot_rename_another_users_entry_by_guessing_id(client):
+    auth_a, _ = _register(client)
+    auth_b, _ = _register(client)
+
+    enroll_response = client.post(
+        "/api/v1/gallery/enroll",
+        json={"name": "User A's contact", "embedding": _embedding(6.0)},
+        headers={"Authorization": auth_a},
+    )
+    entry_id = enroll_response.json()["id"]
+
+    rename_as_b = client.patch(
+        f"/api/v1/gallery/{entry_id}",
+        json={"name": "Renamed by B"},
+        headers={"Authorization": auth_b},
+    )
+    assert rename_as_b.status_code == 404
+
+    list_as_a = client.get("/api/v1/gallery", headers={"Authorization": auth_a})
+    assert any(e["id"] == entry_id and e["name"] == "User A's contact" for e in list_as_a.json()["items"])

@@ -53,6 +53,22 @@ def test_list_gallery_without_session_filter_returns_everyone(db):
     assert total == 2
 
 
+def test_rename_gallery_entry_updates_the_name(db):
+    entry = gallery_service.enroll_face(db, "Alice", _embedding(1.0), "v1", "session-1")
+    renamed = gallery_service.rename_gallery_entry(db, entry.id, "Alicia", "session-1")
+    assert renamed is not None
+    assert renamed.name == "Alicia"
+
+
+def test_rename_gallery_entry_scoped_to_wrong_session_fails(db):
+    entry = gallery_service.enroll_face(db, "Alice", _embedding(1.0), "v1", "session-1")
+    assert gallery_service.rename_gallery_entry(db, entry.id, "Alicia", "session-2") is None
+
+
+def test_rename_nonexistent_entry_returns_none(db):
+    assert gallery_service.rename_gallery_entry(db, 999999, "Anyone", None) is None
+
+
 def test_delete_gallery_entry_removes_it_and_its_samples(db):
     entry = gallery_service.enroll_face(db, "Alice", _embedding(1.0), "v1", "session-1")
     assert gallery_service.delete_gallery_entry(db, entry.id, "session-1") is True

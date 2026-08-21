@@ -54,6 +54,21 @@ def get_gallery_entry(db: Session, entry_id: int) -> Optional[FaceGalleryEntry]:
     return db.query(FaceGalleryEntry).filter(FaceGalleryEntry.id == entry_id).first()
 
 
+def rename_gallery_entry(
+    db: Session, entry_id: int, new_name: str, user_session_id: Optional[str] = None
+) -> Optional[FaceGalleryEntry]:
+    query = db.query(FaceGalleryEntry).filter(FaceGalleryEntry.id == entry_id)
+    if user_session_id is not None:
+        query = query.filter(FaceGalleryEntry.user_session_id == user_session_id)
+    entry = query.first()
+    if not entry:
+        return None
+    entry.name = new_name
+    db.commit()
+    db.refresh(entry)
+    return entry
+
+
 def delete_gallery_entry(db: Session, entry_id: int, user_session_id: Optional[str] = None) -> bool:
     query = db.query(FaceGalleryEntry).filter(FaceGalleryEntry.id == entry_id)
     if user_session_id is not None:

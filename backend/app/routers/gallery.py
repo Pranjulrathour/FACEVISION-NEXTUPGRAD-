@@ -12,6 +12,7 @@ from app.schemas.gallery import (
     GalleryListResponse,
     RecognizeRequest,
     RecognizeResponse,
+    RenameRequest,
 )
 from app.services import gallery_service
 
@@ -65,6 +66,20 @@ def list_entries(
     scope_id = resolve_scope_id(userSessionId, current_user)
     items, total = gallery_service.list_gallery(db, user_session_id=scope_id)
     return GalleryListResponse(items=[_to_response(e) for e in items], total=total)
+
+
+@router.patch("/{entry_id}", response_model=GalleryEntryResponse)
+def rename_entry(
+    entry_id: int,
+    payload: RenameRequest,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional),
+):
+    scope_id = resolve_scope_id(payload.userSessionId, current_user)
+    entry = gallery_service.rename_gallery_entry(db, entry_id, payload.name, user_session_id=scope_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Gallery entry not found")
+    return _to_response(entry)
 
 
 @router.delete("/{entry_id}")
