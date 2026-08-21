@@ -475,12 +475,23 @@ export function FaceVision() {
     async (face: Face, faceIdx: number, opts?: { silent?: boolean }) => {
       const silent = opts?.silent ?? false;
       if (!lastSource.current) return;
-      if (!(await prepareEmbedder())) return;
       recognizeThrottle.current.inFlight.add(faceIdx);
       recognizeThrottle.current.lastCheckedAt[faceIdx] = Date.now();
+      // Set "checking" before the (possibly slow, first-load-only) embedder
+      // model finishes loading -- otherwise a face sits with no feedback at
+      // all for the several seconds SFace's ~37MB model takes to load once,
+      // which reads as "recognition isn't doing anything."
       setRecognizedNames((prev) => ({ ...prev, [faceIdx]: { status: "checking" } }));
       if (!silent) setGalleryBusy(true);
       try {
+        if (!(await prepareEmbedder())) {
+          setRecognizedNames((prev) => {
+            const next = { ...prev };
+            delete next[faceIdx];
+            return next;
+          });
+          return;
+        }
         const vector = await embedFace(embedder.current!, lastSource.current, face.landmarks);
         const result = await api.recognizeFace(vector);
         if (result?.matched && result.name) {
