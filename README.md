@@ -136,7 +136,6 @@ FACEVISION/
 | 🖼️ **Workspace** | Upload or live camera → face cards, confidence badges, annotated PNG export |
 | 🕐 **History** | Thumbnail timeline of the last 100 detections, click to reload |
 | 📈 **Stats** | KPI cards + 7-day trend chart |
-| ⚖️ **Compare** | Landmark-geometry similarity between two faces, animated match meter |
 | 🗂️ **Gallery** | Enroll a face under a name (real SFace embedding) → every future sighting auto-labels as that name or **"Not registered"**, tied to your account |
 | 🕵️ **Check Liveness** | Per-face button running MiniFASNet V2 anti-spoofing, client-side |
 | ⚙️ **Settings** | Toggle history, labels, landmarks, colors, thresholds |
@@ -223,7 +222,7 @@ All execution runs **WebGPU first, WASM fallback** — loaded once per session, 
 All routes versioned under `/api/v1` (canonical). Unversioned `/api/...` paths still work but return a `Deprecation` header.
 
 <details open>
-<summary><strong>Detections · History · Stats · Compare</strong></summary>
+<summary><strong>Detections · History · Stats</strong></summary>
 
 | Method | Route | Description |
 |---|---|---|
@@ -234,7 +233,6 @@ All routes versioned under `/api/v1` (canonical). Unversioned `/api/...` paths s
 | `DELETE` | `/detections/{id}` | Delete one record |
 | `GET` / `DELETE` | `/history` | Alias + filtering / clear all |
 | `GET` | `/stats` | KPI summary + 7-day trend |
-| `POST` | `/compare` | Landmark cosine similarity |
 
 </details>
 
@@ -346,7 +344,6 @@ Grouped by path *template* (`{detection_id}`, not the literal ID) so per-record 
 |---|---|
 | Rate limiting | In-memory by default; Redis-capable but not provisioned today |
 | Liveness | MiniFASNet + heuristic are real signals but **not wired into any security gate** |
-| Compare vs. Gallery | "Compare" is landmark-geometry similarity, not recognition — Gallery is the real embedding-based path |
 | Gallery scale | Linear cosine-similarity scan, no vector index — fine at personal scale |
 | Postgres | Single-node, no replication — back up the volume yourself |
 | `gallery/recognize` | Intentionally not gated behind `API_KEY` (visitors need to use it) — rate-limited instead |

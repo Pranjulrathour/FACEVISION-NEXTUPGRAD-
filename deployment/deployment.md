@@ -125,7 +125,6 @@ Services:
 | `GET` | `/api/history` | Detection history alias |
 | `DELETE` | `/api/history` | Clear all history |
 | `GET` | `/api/stats` | Aggregated detection stats |
-| `POST` | `/api/compare` | Compare two faces (landmark-based) |
 
 ## Database Schema
 
