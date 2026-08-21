@@ -148,4 +148,30 @@ describe("decodeYuNet", () => {
     const box = faces[0].box;
     expect(box.x + box.width / 2).toBeCloseTo(expectedCenterX, 4);
   });
+
+  // Regression coverage for a real false-positive liveness report: MiniFASNet
+  // was fed the display-padded box (`box`), double-counting padding on top
+  // of its own 2.7x expansion (antispoof-crop.ts) versus the tight box the
+  // model was calibrated against. `rawBox` exists so callers that need the
+  // detector's literal output, not the cosmetically-padded one, can get it.
+  it("exposes rawBox as the pre-padding box, distinct from the padded display box", () => {
+    const stride = 8;
+    const columns = 640 / stride;
+    const col = 20;
+    const row = 20;
+    const cellIndex = row * columns + col;
+    const output = makeStrideOutput(stride, cellIndex, [0, 0, 1, 1]); // exp(1)*stride > stride, non-trivial size
+
+    const faces = decodeYuNet(output, 1, 640, 640, 0, 0, 0.5);
+
+    expect(faces).toHaveLength(1);
+    const { box, rawBox } = faces[0];
+    expect(rawBox).toBeDefined();
+    // The padded box is expandBox() applied to rawBox -- not equal to it,
+    // and strictly larger on every side.
+    expect(box.width).toBeGreaterThan(rawBox!.width);
+    expect(box.height).toBeGreaterThan(rawBox!.height);
+    expect(box.x).toBeLessThanOrEqual(rawBox!.x);
+    expect(box.y).toBeLessThanOrEqual(rawBox!.y);
+  });
 });

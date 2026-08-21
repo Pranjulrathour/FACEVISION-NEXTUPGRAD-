@@ -8,6 +8,17 @@ export type FaceLandmarks = {
 
 export type Face = {
   box: { x: number; y: number; width: number; height: number };
+  /** The detector's box before expandBox()'s cosmetic UI padding (§ yunet.ts)
+   * is added. MiniFASNet's anti-spoofing crop (antispoof-crop.ts) was
+   * calibrated against the original Silent-Face-Anti-Spoofing repo's own
+   * detector, which returns a tight box, not one already padded for
+   * display -- feeding it `box` instead double-counts padding (this
+   * padding, then antispoof-crop's own 2.7x expansion on top of an
+   * already-larger box), zooming out further than the model expects.
+   * Optional and falls back to `box` at the call site -- Face objects
+   * constructed without a real detector (tests, older records loaded
+   * from history) won't have one. */
+  rawBox?: { x: number; y: number; width: number; height: number };
   confidence: number;
   landmarks: FaceLandmarks;
 };

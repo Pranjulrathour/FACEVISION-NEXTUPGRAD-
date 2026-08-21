@@ -193,6 +193,7 @@ export function decodeYuNet(
       const originalY = clippedY / scale;
       const originalWidth = clippedWidth / scale;
       const originalHeight = clippedHeight / scale;
+      const rawBox = { x: originalX, y: originalY, width: originalWidth, height: originalHeight };
       const padded = expandBox(originalX, originalY, originalWidth, originalHeight);
       const landmarks = kps
         ? buildLandmarks(kps, index, stride, columns, dx, dy, scale)
@@ -203,7 +204,7 @@ export function decodeYuNet(
             rightMouth: { x: padded.x + padded.width * 0.35, y: padded.y + padded.height * 0.75 },
             leftMouth: { x: padded.x + padded.width * 0.65, y: padded.y + padded.height * 0.75 },
           };
-      faces.push({ box: padded, confidence, landmarks });
+      faces.push({ box: padded, rawBox, confidence, landmarks });
     }
   }
   return faces;

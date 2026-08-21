@@ -169,6 +169,13 @@ export const api = {
     });
   },
 
+  async renameGalleryEntry(entryId: number, name: string): Promise<GalleryEntry | null> {
+    return request<GalleryEntry>(`/gallery/${entryId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name, userSessionId: getSessionId() }),
+    });
+  },
+
   async recognizeFace(
     embedding: Float32Array | number[],
     threshold?: number

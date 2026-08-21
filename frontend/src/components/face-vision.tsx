@@ -372,7 +372,10 @@ export function FaceVision() {
         const result = await checkLiveness(
           antiSpoof.current!,
           lastSource.current,
-          face.box,
+          // MiniFASNet's crop expects the detector's raw box, not the one
+          // padded for on-screen display -- see the rawBox comment in
+          // face-types.ts for why using the padded box here skewed results.
+          face.rawBox ?? face.box,
           sourceDimensions(lastSource.current).width,
           sourceDimensions(lastSource.current).height
         );
@@ -559,6 +562,26 @@ export function FaceVision() {
       try {
         await api.deleteGalleryEntry(entryId);
         await refreshGallery();
+      } finally {
+        setGalleryBusy(false);
+      }
+    },
+    [refreshGallery]
+  );
+
+  const renameGalleryEntry = useCallback(
+    async (entryId: number, currentName: string) => {
+      const nextName = window.prompt("Rename this identity to:", currentName);
+      if (!nextName || !nextName.trim() || nextName.trim() === currentName) return;
+      setGalleryBusy(true);
+      try {
+        const updated = await api.renameGalleryEntry(entryId, nextName.trim());
+        if (updated) {
+          setStatus(`Renamed "${currentName}" to "${updated.name}".`);
+          await refreshGallery();
+        } else {
+          setStatus("Rename failed — backend unavailable or rejected the request.");
+        }
       } finally {
         setGalleryBusy(false);
       }
@@ -1233,13 +1256,22 @@ export function FaceVision() {
                     </div>
                     <small className="muted">Enrolled {new Date(entry.createdAt).toLocaleString()}</small>
                   </div>
-                  <button
-                    className="danger-btn"
-                    disabled={galleryBusy}
-                    onClick={() => void deleteGalleryEntry(entry.id)}
-                  >
-                    Delete
-                  </button>
+                  <div className="gallery-entry-actions">
+                    <button
+                      className="ghost-btn"
+                      disabled={galleryBusy}
+                      onClick={() => void renameGalleryEntry(entry.id, entry.name)}
+                    >
+                      Rename
+                    </button>
+                    <button
+                      className="danger-btn"
+                      disabled={galleryBusy}
+                      onClick={() => void deleteGalleryEntry(entry.id)}
+                    >
+                      Delete
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
