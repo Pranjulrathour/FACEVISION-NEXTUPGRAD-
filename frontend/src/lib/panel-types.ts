@@ -1,1 +1,1 @@
-export type PanelTab = "workspace" | "history" | "stats" | "compare" | "gallery" | "settings";
+export type PanelTab = "workspace" | "history" | "stats" | "gallery" | "settings";

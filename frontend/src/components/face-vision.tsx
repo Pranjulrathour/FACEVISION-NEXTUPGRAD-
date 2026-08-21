@@ -1,13 +1,12 @@
 "use client";
 
-import { ChangeEvent, DragEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type {
   Face,
   RuntimeState,
   DetectionMode,
   DetectionRecord,
-  FaceMatchResult,
   StatsSummary,
   AppSettings,
   GalleryEntry,
@@ -20,7 +19,6 @@ import { MiniFASNetClassifier } from "@/lib/minifasnet";
 import { deepEqualFace } from "@/lib/face-math";
 import {
   runDetectionPipeline,
-  matchFaces,
   embedFace,
   checkLiveness,
   FacePipelineError,
@@ -51,7 +49,6 @@ const DEFAULT_SETTINGS: AppSettings = {
   showConfidenceLabel: true,
   frameColor: "#55f3b0",
   landmarkColor: "#ffd93d",
-  compareThreshold: 0.78,
 };
 
 function uid(): string {
@@ -103,9 +100,6 @@ export function FaceVision() {
   const [settings, setSettings] = useState<AppSettings>(() => getSettings());
   const [history, setHistory] = useState<DetectionRecord[]>(() => getLocalHistory());
   const [stats, setStats] = useState<StatsSummary | null>(() => getLocalStats());
-  const [compareSlots, setCompareSlots] = useState<[Face | null, Face | null]>([null, null]);
-  const [compareResult, setCompareResult] = useState<FaceMatchResult | null>(null);
-  const [comparing, setComparing] = useState(false);
   const [selectedFaceIdx, setSelectedFaceIdx] = useState<number | null>(null);
   const [apiAvailable, setApiAvailable] = useState(false);
   const [embedderStatus, setEmbedderStatus] = useState<RuntimeState>("idle");
@@ -205,8 +199,7 @@ export function FaceVision() {
       width: number,
       height: number,
       found: Face[],
-      highlightIndex: number | null = null,
-      slotIndices: [number | null, number | null] = [null, null]
+      highlightIndex: number | null = null
     ) => {
       const output = canvas.current;
       if (!output) return;
@@ -221,18 +214,10 @@ export function FaceVision() {
       const radius = Math.max(6, width / 180);
       found.forEach((face, i) => {
         const { x, y, width: boxWidth, height: boxHeight } = face.box;
-        const isCompareA = slotIndices[0] === i;
-        const isCompareB = slotIndices[1] === i;
         const isHighlight = highlightIndex === i;
         let stroke = settings.frameColor;
         let fillAlpha = 0.14;
-        if (isCompareA) {
-          stroke = "#3db4ff";
-          fillAlpha = 0.22;
-        } else if (isCompareB) {
-          stroke = "#ff7bd1";
-          fillAlpha = 0.22;
-        } else if (isHighlight) {
+        if (isHighlight) {
           stroke = "#fff";
           fillAlpha = 0.2;
         }
@@ -538,12 +523,6 @@ export function FaceVision() {
     [refreshGallery]
   );
 
-  const slotIndices = useMemo<[number | null, number | null]>(() => {
-    const aIdx = compareSlots[0] ? faces.findIndex((f) => deepEqualFace(f, compareSlots[0]!)) : -1;
-    const bIdx = compareSlots[1] ? faces.findIndex((f) => deepEqualFace(f, compareSlots[1]!)) : -1;
-    return [aIdx >= 0 ? aIdx : null, bIdx >= 0 ? bIdx : null];
-  }, [compareSlots, faces]);
-
   const detectImage = useCallback(
     async (url: string, confidence: number, nms: number) => {
       const image = await loadImage(url);
@@ -572,8 +551,7 @@ export function FaceVision() {
           image.naturalWidth,
           image.naturalHeight,
           found,
-          selectedFaceIdx,
-          slotIndices
+          selectedFaceIdx
         );
         setFaces(found);
         setRecognizedNames({});
@@ -608,7 +586,7 @@ export function FaceVision() {
         setProcessing(false);
       }
     },
-    [draw, prepareDetector, refreshEngine, persistCurrent, selectedFaceIdx, slotIndices, runRecognitionCheck]
+    [draw, prepareDetector, refreshEngine, persistCurrent, selectedFaceIdx, runRecognitionCheck]
   );
 
   const selectFile = useCallback(
@@ -628,8 +606,6 @@ export function FaceVision() {
       const url = URL.createObjectURL(file);
       setPreview(url);
       setFaces([]);
-      setCompareSlots([null, null]);
-      setCompareResult(null);
       await detectImage(url, confidenceSlider, nmsSlider);
     },
     [detectImage, preview, confidenceSlider, nmsSlider]
@@ -708,8 +684,7 @@ export function FaceVision() {
                 videoWidth,
                 videoHeight,
                 found,
-                selectedFaceIdx,
-                slotIndices
+                selectedFaceIdx
               );
               setFaces(found);
               refreshEngine();
@@ -752,7 +727,7 @@ export function FaceVision() {
         }
       }
     },
-    [draw, prepareDetector, refreshEngine, stopCamera, persistCurrent, selectedFaceIdx, slotIndices, runRecognitionCheck]
+    [draw, prepareDetector, refreshEngine, stopCamera, persistCurrent, selectedFaceIdx, runRecognitionCheck]
   );
 
   useEffect(() => () => {
@@ -763,8 +738,6 @@ export function FaceVision() {
   function changeMode(next: DetectionMode) {
     setMode(next);
     setFaces([]);
-    setCompareSlots([null, null]);
-    setCompareResult(null);
     setSelectedFaceIdx(null);
     if (next === "upload") stopCamera();
     else void startCamera(confidenceSlider, nmsSlider);
@@ -804,37 +777,6 @@ export function FaceVision() {
     a.click();
   }
 
-  function pickSlot(slot: 0 | 1, face: Face) {
-    const next: [Face | null, Face | null] = [...compareSlots];
-    next[slot] = face;
-    setCompareSlots(next);
-    setCompareResult(null);
-  }
-  function clearSlot(slot: 0 | 1) {
-    const next: [Face | null, Face | null] = [...compareSlots];
-    next[slot] = null;
-    setCompareSlots(next);
-    setCompareResult(null);
-  }
-  async function runCompare() {
-    if (!compareSlots[0] || !compareSlots[1]) return;
-    setComparing(true);
-    try {
-      if (apiAvailable) {
-        const res = await api.compareFaces(
-          compareSlots[0],
-          compareSlots[1],
-          settings.compareThreshold
-        );
-        if (res) setCompareResult(res);
-      } else {
-        const res = matchFaces(compareSlots[0], compareSlots[1], settings.compareThreshold);
-        setCompareResult(res);
-      }
-    } finally {
-      setComparing(false);
-    }
-  }
 
   async function loadFromHistory(rec: DetectionRecord) {
     setPanel("workspace");
@@ -844,7 +786,7 @@ export function FaceVision() {
     if (rec.imageDataUrl) {
       const img = await loadImage(rec.imageDataUrl);
       setPreview(rec.imageDataUrl);
-      draw(img, img.naturalWidth, img.naturalHeight, rec.faces, selectedFaceIdx, slotIndices);
+      draw(img, img.naturalWidth, img.naturalHeight, rec.faces, selectedFaceIdx);
     }
     setStatus(`Loaded detection from ${new Date(rec.timestamp).toLocaleString()} · ${rec.faceCount} face(s).`);
   }
@@ -899,8 +841,8 @@ export function FaceVision() {
             <em>Keep the privacy.</em>
           </h1>
           <p className="lede">
-            Detect faces in your photos or live camera feed with a fast, local YuNet model.
-            Save history, compare faces, and inspect detection statistics.
+            Detect and recognize faces in your photos or live camera feed with a fast, local
+            YuNet model. Save history and inspect detection statistics.
           </p>
         </div>
         <div className="stat">
@@ -925,7 +867,6 @@ export function FaceVision() {
             ["workspace", "Workspace"],
             ["history", "History"],
             ["stats", "Stats"],
-            ["compare", "Compare"],
             ["gallery", "Gallery"],
             ["settings", "Settings"],
           ] as [PanelTab, string][]
@@ -1041,13 +982,11 @@ export function FaceVision() {
             <div className="faces-grid">
               {faces.map((face, i) => {
                 const selected = selectedFaceIdx === i;
-                const inA = compareSlots[0] && deepEqualFace(face, compareSlots[0]);
-                const inB = compareSlots[1] && deepEqualFace(face, compareSlots[1]);
                 const recognition = recognizedNames[i];
                 return (
                   <div
                     key={i}
-                    className={`face-card ${selected ? "selected" : ""} ${inA ? "slot-a" : ""} ${inB ? "slot-b" : ""}`}
+                    className={`face-card ${selected ? "selected" : ""}`}
                     onClick={() => setSelectedFaceIdx(selected ? null : i)}
                   >
                     <div className="face-card-header">
@@ -1070,24 +1009,6 @@ export function FaceVision() {
                       )}
                     </div>
                     <div className="face-card-actions">
-                      <button
-                        className={`chip chip-a ${inA ? "on" : ""}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          inA ? clearSlot(0) : pickSlot(0, face);
-                        }}
-                      >
-                        {inA ? "✓ Slot A" : "+ Compare A"}
-                      </button>
-                      <button
-                        className={`chip chip-b ${inB ? "on" : ""}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          inB ? clearSlot(1) : pickSlot(1, face);
-                        }}
-                      >
-                        {inB ? "✓ Slot B" : "+ Compare B"}
-                      </button>
                       <button
                         className="chip chip-enroll"
                         disabled={galleryBusy}
@@ -1229,81 +1150,6 @@ export function FaceVision() {
         </section>
       )}
 
-      {panel === "compare" && (
-        <section className="workspace panel-content">
-          <div className="panel-header">
-            <h3>Face comparison</h3>
-            <small className="muted">Pick Slot A + B from Workspace face cards</small>
-          </div>
-          <div className="compare-row">
-            {[0, 1].map((s) => (
-              <div key={s} className={`compare-slot slot-${s === 0 ? "a" : "b"}`}>
-                <div className="compare-slot-label">
-                  Slot {s === 0 ? "A" : "B"}
-                </div>
-                {compareSlots[s] ? (
-                  <div className="compare-summary">
-                    <div className="summary-grid">
-                      <div><small>Confidence</small><strong>{Math.round(compareSlots[s]!.confidence * 100)}%</strong></div>
-                      <div><small>Box size</small><strong>{Math.round(compareSlots[s]!.box.width)} × {Math.round(compareSlots[s]!.box.height)}</strong></div>
-                    </div>
-                    <LandmarkPreview face={compareSlots[s]!} />
-                    <button className="ghost-btn" onClick={() => clearSlot(s as 0 | 1)}>Clear</button>
-                  </div>
-                ) : (
-                  <div className="empty-slot">
-                    <p>Empty slot {s === 0 ? "A" : "B"}</p>
-                    <small>Go to Workspace → choose a face card → “+ Compare {s === 0 ? "A" : "B"}”.</small>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-          <div className="compare-actions">
-            <button
-              className="primary-btn"
-              disabled={!compareSlots[0] || !compareSlots[1] || comparing}
-              onClick={runCompare}
-            >
-              {comparing ? "Comparing…" : "Compare faces"}
-            </button>
-            <label className="inline-slider">
-              Threshold: {Math.round(settings.compareThreshold * 100)}%
-              <input
-                type="range"
-                min="0.5"
-                max="0.99"
-                step="0.01"
-                value={settings.compareThreshold}
-                onChange={(e) =>
-                  setSettings({ ...settings, compareThreshold: Number(e.target.value) })
-                }
-                className="mint-slider"
-              />
-            </label>
-          </div>
-          {compareResult && (
-            <div className={`compare-result ${compareResult.isMatch ? "match" : "no-match"}`}>
-              <h4>
-                {compareResult.isMatch ? "✓ Likely the same person" : "✗ Different people"}
-              </h4>
-              <div className="similarity-meter">
-                <div
-                  className="similarity-fill"
-                  style={{ width: `${Math.round(compareResult.similarity * 100)}%` }}
-                />
-              </div>
-              <p>
-                Similarity: <strong>{Math.round(compareResult.similarity * 100)}%</strong> ·
-                threshold {Math.round(compareResult.threshold * 100)}%
-              </p>
-              <small className="muted">
-                Result is derived from landmark geometry (cosine similarity on normalized keypoints).
-              </small>
-            </div>
-          )}
-        </section>
-      )}
 
       {panel === "gallery" && (
         <section className="workspace panel-content">
@@ -1312,9 +1158,8 @@ export function FaceVision() {
             <button className="ghost-btn" onClick={() => void refreshGallery()}>↻ Refresh</button>
           </div>
           <p className="lede">
-            Enroll and recognize faces using SFace — a real trained embedding model, distinct
-            from the landmark-geometry similarity used in Compare. Only the embedding vector
-            (128 numbers) is ever sent to the backend — never an image.{" "}
+            Enroll and recognize faces using SFace — a real trained embedding model. Only the
+            embedding vector (128 numbers) is ever sent to the backend — never an image.{" "}
             <small className="muted">
               Model: {embedderStatus === "ready" ? "loaded" : embedderStatus === "loading" ? "loading…" : "not loaded yet"}
             </small>
@@ -1500,42 +1345,6 @@ export function FaceVision() {
   );
 }
 
-function LandmarkPreview({ face }: { face: Face }) {
-  const size = 140;
-  const lm = face.landmarks;
-  const pts = [lm.rightEye, lm.leftEye, lm.nose, lm.rightMouth, lm.leftMouth];
-  const xs = pts.map((p) => p.x);
-  const ys = pts.map((p) => p.y);
-  const minX = Math.min(...xs) - 20;
-  const minY = Math.min(...ys) - 20;
-  const maxX = Math.max(...xs) + 20;
-  const maxY = Math.max(...ys) + 20;
-  const w = Math.max(1, maxX - minX);
-  const h = Math.max(1, maxY - minY);
-  const sx = size / w;
-  const sy = size / h;
-  const norm = pts.map((p) => ({ x: (p.x - minX) * sx, y: (p.y - minY) * sy }));
-  return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="lm-preview">
-      <rect x="0" y="0" width={size} height={size} rx="10" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)" />
-      <polyline
-        fill="none"
-        stroke="#ffd93d88"
-        strokeWidth="1.5"
-        points={`${norm[0].x},${norm[0].y} ${norm[2].x},${norm[2].y} ${norm[1].x},${norm[1].y}`}
-      />
-      <polyline
-        fill="none"
-        stroke="#ffd93d88"
-        strokeWidth="1.5"
-        points={`${norm[2].x},${norm[2].y} ${norm[3].x},${norm[3].y} ${norm[4].x},${norm[4].y}`}
-      />
-      {norm.map((p, i) => (
-        <circle key={i} cx={p.x} cy={p.y} r="3.5" fill="#ffd93d" />
-      ))}
-    </svg>
-  );
-}
 {/* v1 */}
 {/* v2 */}
 {/* v3 */}

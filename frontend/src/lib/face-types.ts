@@ -51,7 +51,6 @@ export type AppSettings = {
   showConfidenceLabel: boolean;
   frameColor: string;
   landmarkColor: string;
-  compareThreshold: number;
 };
 
 /** An enrolled identity in the recognition gallery (checklist §2, §28) —

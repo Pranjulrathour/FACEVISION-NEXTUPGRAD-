@@ -10,7 +10,6 @@ const DEFAULT_SETTINGS: AppSettings = {
   showConfidenceLabel: true,
   frameColor: "#55f3b0",
   landmarkColor: "#ffd93d",
-  compareThreshold: 0.78,
 };
 
 export function saveDetection(record: DetectionRecord): void {
