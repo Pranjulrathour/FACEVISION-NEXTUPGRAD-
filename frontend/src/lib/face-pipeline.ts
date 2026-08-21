@@ -10,6 +10,7 @@ import { cropFaceImageData } from "./face-crop";
 import { alignFace } from "./face-alignment";
 import { cropForAntiSpoof } from "./antispoof-crop";
 import type { PixelBuffer } from "./pixel-analysis";
+import { runInferenceExclusive } from "./inference-mutex";
 
 /**
  * Client-side face processing pipeline, mirroring the stage structure from
@@ -141,11 +142,19 @@ export async function runDetectionPipeline(
   // module here. See yunet.ts for that stage's implementation. Wrapped in
   // a timeout (§12) so a stuck inference call can't hang the pipeline
   // forever with no signal back to the caller.
+  // runInferenceExclusive wraps the *timeout-bounded* call, not the raw
+  // one -- if it wrapped the raw detector.detect() call instead, a single
+  // truly stuck inference (the exact case this timeout exists to survive)
+  // would leave the shared queue permanently blocked on a promise that
+  // never settles, deadlocking every future detect()/embed()/classify()
+  // call in the app, not just this one.
   const timeoutMs = options.inferenceTimeoutMs ?? DEFAULT_INFERENCE_TIMEOUT_MS;
-  const faces = await withTimeout(
-    detector.detect(source, width, height, options.confidenceThreshold, options.nmsThreshold),
-    timeoutMs,
-    `Face detection timed out after ${timeoutMs}ms.`
+  const faces = await runInferenceExclusive(() =>
+    withTimeout(
+      detector.detect(source, width, height, options.confidenceThreshold, options.nmsThreshold),
+      timeoutMs,
+      `Face detection timed out after ${timeoutMs}ms.`
+    )
   );
 
   // --- Quality Assessment stage (+ Face Crop) ---
@@ -195,10 +204,8 @@ export async function embedFace(
   if (!aligned) {
     throw new EmbeddingError("ALIGNMENT_FAILED", "Could not align the face for embedding (no canvas available).");
   }
-  return withTimeout(
-    embedder.embed(aligned),
-    timeoutMs,
-    `Face embedding timed out after ${timeoutMs}ms.`
+  return runInferenceExclusive(() =>
+    withTimeout(embedder.embed(aligned), timeoutMs, `Face embedding timed out after ${timeoutMs}ms.`)
   );
 }
 
@@ -244,9 +251,7 @@ export async function checkLiveness(
   if (!patch) {
     throw new LivenessCheckError("CROP_FAILED", "Could not crop the face for liveness checking (no canvas available).");
   }
-  return withTimeout(
-    classifier.classify(patch),
-    timeoutMs,
-    `Liveness check timed out after ${timeoutMs}ms.`
+  return runInferenceExclusive(() =>
+    withTimeout(classifier.classify(patch), timeoutMs, `Liveness check timed out after ${timeoutMs}ms.`)
   );
 }

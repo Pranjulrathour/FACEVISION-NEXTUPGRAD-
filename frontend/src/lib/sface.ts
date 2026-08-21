@@ -57,13 +57,6 @@ export class SFaceEmbedder implements FaceEmbedder {
   private session: Session | null = null;
   private ort: Ort | null = null;
   private activeProvider: "webgpu" | "wasm" | null = null;
-  /** Serializes session.run() calls -- WebGPU (and possibly wasm) execution
-   * providers aren't guaranteed safe for concurrent run() calls on one
-   * session, and this embedder is now called both from a manual click and
-   * from a periodic auto-recognition timer that can otherwise overlap.
-   * Concurrent calls were observed to corrupt internal state and throw a
-   * cryptic minified null-property error instead of a real failure. */
-  private runQueue: Promise<unknown> = Promise.resolve();
 
   readonly modelVersion = SFACE_MODEL_VERSION;
   readonly embeddingDimension = SFACE_EMBEDDING_DIMENSION;
@@ -100,13 +93,11 @@ export class SFaceEmbedder implements FaceEmbedder {
 
     const input = imageDataToChwTensor(alignedFace.data, alignedFace.width, alignedFace.height);
     const tensor = new this.ort.Tensor("float32", input, [1, 3, INPUT_SIZE, INPUT_SIZE]);
-
-    const session = this.session;
-    const runAfterPrevious = this.runQueue.then(() => session.run({ data: tensor }));
-    // Chain the queue off a version that never rejects, so one failed run
-    // doesn't permanently wedge every future call behind a rejected promise.
-    this.runQueue = runAfterPrevious.catch(() => undefined);
-    const output = await runAfterPrevious;
+    // Concurrency across detect()/embed()/classify() calls is serialized
+    // one level up, by runInferenceExclusive() in face-pipeline.ts -- see
+    // inference-mutex.ts for why a per-class queue here isn't enough
+    // (onnxruntime-web state is shared across *different* sessions too).
+    const output = await this.session.run({ data: tensor });
 
     const raw = output.fc1.data as Float32Array;
     return new Float32Array(raw);
