@@ -22,6 +22,7 @@ import {
   embedFace,
   checkLiveness,
   FacePipelineError,
+  EmbeddingError,
 } from "@/lib/face-pipeline";
 import { LivenessHeuristic } from "@/lib/liveness";
 import { shouldAutoRecognize } from "@/lib/recognition-throttle";
@@ -74,6 +75,13 @@ export function FaceVision() {
   const antiSpoof = useRef<MiniFASNetClassifier | null>(null);
   const lastSource = useRef<HTMLImageElement | HTMLVideoElement | HTMLCanvasElement | null>(null);
   const cameraLiveness = useRef<LivenessHeuristic>(new LivenessHeuristic());
+  /** Mirrors recognizedNames state for draw() to read at call time. draw()
+   * intentionally does NOT depend on recognizedNames (that would recreate
+   * it, and therefore startCamera, on every recognition tick) -- the
+   * already-running camera loop closes over one draw() instance for its
+   * whole session, so anything it needs to see update live has to come
+   * from a ref, not a dependency-array-triggered recreation. */
+  const recognizedNamesRef = useRef<Record<number, RecognitionLabel>>({});
   const stream = useRef<MediaStream | null>(null);
   const video = useRef<HTMLVideoElement | null>(null);
   const canvas = useRef<HTMLCanvasElement | null>(null);
@@ -159,6 +167,10 @@ export function FaceVision() {
   useEffect(() => {
     saveSettings(settings);
   }, [settings]);
+
+  useEffect(() => {
+    recognizedNamesRef.current = recognizedNames;
+  }, [recognizedNames]);
 
   const refreshEngine = useCallback(() => {
     const active = detector.current?.provider;
@@ -247,6 +259,17 @@ export function FaceVision() {
           context.fillStyle = stroke;
           context.fillText(label, x + 8, Math.max(17, y - 7));
         }
+        const recognition = recognizedNamesRef.current[i];
+        if (recognition && recognition.status !== "checking") {
+          const nameText = recognition.status === "matched" ? recognition.name : "Not registered";
+          const nameColor = recognition.status === "matched" ? "#55f3b0" : "#ff8f8f";
+          const nameW = context.measureText(nameText).width + 16;
+          const nameY = Math.min(height - 24, y + boxHeight + 6);
+          context.fillStyle = "#07130ecc";
+          context.fillRect(x, nameY, nameW, 24);
+          context.fillStyle = nameColor;
+          context.fillText(nameText, x + 8, nameY + 17);
+        }
         if (settings.showLandmarks) {
           const landmarkRadius = Math.max(3, width / 260);
           context.fillStyle = settings.landmarkColor;
@@ -272,6 +295,18 @@ export function FaceVision() {
     },
     [settings.frameColor, settings.landmarkColor, settings.showConfidenceLabel, settings.showLandmarks]
   );
+
+  // Upload mode draws the canvas once, at detection time -- unlike camera
+  // mode's continuously-redrawing loop, nothing repaints it afterwards.
+  // Auto-recognition resolves shortly after that initial draw, so without
+  // this the on-canvas name tag would never actually appear for an
+  // uploaded image (the sidebar face card would still show it correctly,
+  // just not the frame itself).
+  useEffect(() => {
+    if (mode !== "upload" || !lastSource.current || faces.length === 0) return;
+    const { width, height } = sourceDimensions(lastSource.current);
+    draw(lastSource.current, width, height, faces, selectedFaceIdx);
+  }, [recognizedNames, mode, faces, selectedFaceIdx, draw]);
 
   const prepareDetector = useCallback(async () => {
     if (detector.current) return true;
@@ -499,7 +534,15 @@ export function FaceVision() {
           return next;
         });
         if (!silent) {
-          const detail = err instanceof Error ? err.message : String(err);
+          // Only ever show the raw error message for our own, deliberately
+          // worded error types. Anything else (e.g. an internal ONNX
+          // Runtime failure) surfaces as a minified, unreadable string --
+          // show a plain message instead and leave the real detail in the
+          // console for debugging.
+          const detail =
+            err instanceof EmbeddingError || err instanceof FacePipelineError
+              ? err.message
+              : "an unexpected error — see the browser console for details";
           setStatus(`Recognition failed — ${detail}.`);
         }
       } finally {
