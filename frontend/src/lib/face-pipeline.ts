@@ -5,7 +5,7 @@ import type { Face, FaceLandmarks, FaceMatchResult } from "./face-types";
 import { validateDecodedImageDimensions } from "./image";
 import { assessFaces, type FaceQualityOptions, type FaceQualityResult } from "./face-quality";
 import { LivenessHeuristic, type LivenessObservation } from "./liveness";
-import { compareFaces, matchEmbeddings } from "./face-math";
+import { matchEmbeddings } from "./face-math";
 import { cropFaceImageData } from "./face-crop";
 import { alignFace } from "./face-alignment";
 import { cropForAntiSpoof } from "./antispoof-crop";
@@ -170,16 +170,6 @@ export async function runDetectionPipeline(
   return { faces, quality, liveness };
 }
 
-/**
- * Landmark-geometry Matching Service — the original, still-available
- * comparison path (see docs/adr/0001-landmark-similarity-vs-embeddings.md).
- * For real identity-embedding matching, see embedFace() + matchEmbeddings()
- * below (docs/adr/0002-sface-embeddings-for-gallery-recognition.md).
- */
-export function matchFaces(faceA: Face, faceB: Face, threshold?: number): FaceMatchResult {
-  return compareFaces(faceA, faceB, threshold);
-}
-
 export type EmbeddingErrorCode = "ALIGNMENT_FAILED";
 
 export class EmbeddingError extends Error {
@@ -213,9 +203,8 @@ export async function embedFace(
 }
 
 /**
- * Matching Service stage for real embeddings (as opposed to matchFaces()'s
- * landmark-geometry comparison above). Threshold defaults to SFace's own
- * calibrated cosine-similarity operating point.
+ * Matching Service stage for real embeddings. Threshold defaults to
+ * SFace's own calibrated cosine-similarity operating point.
  */
 export function matchFaceEmbeddings(
   embeddingA: Float32Array,

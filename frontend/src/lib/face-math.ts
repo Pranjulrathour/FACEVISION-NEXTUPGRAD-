@@ -7,23 +7,6 @@ export function euclideanDistance(
   return Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
 }
 
-export function normalizeLandmarks(
-  landmarks: FaceLandmarks,
-  box: { x: number; y: number; width: number; height: number }
-): number[] {
-  const points = [
-    landmarks.rightEye,
-    landmarks.leftEye,
-    landmarks.nose,
-    landmarks.rightMouth,
-    landmarks.leftMouth,
-  ];
-  return points.map((p) => [
-    (p.x - box.x) / box.width,
-    (p.y - box.y) / box.height,
-  ]).flat();
-}
-
 export function cosineSimilarity(a: ArrayLike<number>, b: ArrayLike<number>): number {
   if (a.length !== b.length || a.length === 0) return 0;
   let dot = 0,
@@ -36,21 +19,6 @@ export function cosineSimilarity(a: ArrayLike<number>, b: ArrayLike<number>): nu
   }
   if (normA === 0 || normB === 0) return 0;
   return dot / (Math.sqrt(normA) * Math.sqrt(normB));
-}
-
-export function compareFaces(
-  faceA: Face,
-  faceB: Face,
-  threshold = 0.78
-): FaceMatchResult {
-  const vecA = normalizeLandmarks(faceA.landmarks, faceA.box);
-  const vecB = normalizeLandmarks(faceB.landmarks, faceB.box);
-  const similarity = cosineSimilarity(vecA, vecB);
-  return {
-    similarity: Math.max(0, Math.min(1, similarity)),
-    isMatch: similarity >= threshold,
-    threshold,
-  };
 }
 
 export function interocularDistance(landmarks: FaceLandmarks): number {
@@ -75,8 +43,7 @@ export function estimateYawn(landmarks: FaceLandmarks): number {
 }
 
 /**
- * Match two face **embeddings** (e.g. from SFaceEmbedder, checklist §10) —
- * distinct from compareFaces() above, which compares landmark geometry.
+ * Match two face **embeddings** (e.g. from SFaceEmbedder, checklist §10).
  * Default threshold is SFace's own calibrated cosine-similarity operating
  * point (0.363), not a value tuned by this app.
  */

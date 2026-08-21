@@ -1,8 +1,6 @@
 import type {
   DetectionRecord,
   StatsSummary,
-  Face,
-  FaceMatchResult,
   DetectionMode,
   GalleryEntry,
   RecognitionResult,
@@ -139,17 +137,6 @@ export const api = {
   async getStats(): Promise<StatsSummary | null> {
     const params = new URLSearchParams({ userSessionId: getSessionId() });
     return request<StatsSummary>(`/stats?${params.toString()}`);
-  },
-
-  async compareFaces(
-    faceA: Face,
-    faceB: Face,
-    threshold = 0.78
-  ): Promise<FaceMatchResult | null> {
-    return request<FaceMatchResult>("/compare", {
-      method: "POST",
-      body: JSON.stringify({ faceA, faceB, threshold }),
-    });
   },
 
   /** Enroll an embedding under `name` — only the embedding vector is sent,

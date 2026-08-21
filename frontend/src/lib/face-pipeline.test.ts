@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   runDetectionPipeline,
-  matchFaces,
   embedFace,
   matchFaceEmbeddings,
   checkLiveness,
@@ -172,22 +171,6 @@ describe("runDetectionPipeline", () => {
     // are silently skipped rather than crashing — quality falls back to
     // geometry-only, same as if the option were off.
     expect(result.quality.code).toBe("OK");
-  });
-});
-
-describe("matchFaces", () => {
-  it("delegates to the landmark-similarity matching service", () => {
-    const face = makeFace();
-    const result = matchFaces(face, face);
-    expect(result.isMatch).toBe(true);
-    expect(result.similarity).toBeCloseTo(1);
-  });
-
-  it("respects a custom threshold", () => {
-    const faceA = makeFace();
-    const faceB = makeFace({ confidence: 0.1 }); // confidence doesn't affect similarity, just sanity
-    const result = matchFaces(faceA, faceB, 0.99);
-    expect(result.threshold).toBe(0.99);
   });
 });
 
