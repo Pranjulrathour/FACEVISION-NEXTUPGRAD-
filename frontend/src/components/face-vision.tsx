@@ -465,11 +465,15 @@ export function FaceVision() {
     async (face: Face, name: string) => {
       if (!lastSource.current) {
         setStatus("Run a detection first, then enroll a face.");
-        return;
+        return false;
       }
-      if (!(await prepareEmbedder())) return;
+      // Set busy before the (possibly slow, first-load-only) embedder
+      // prep -- otherwise the Save button sits looking idle for however
+      // long the ~37MB SFace model takes to fetch, with no sign anything
+      // is happening.
       setGalleryBusy(true);
       try {
+        if (!(await prepareEmbedder())) return false;
         const vector = await embedFace(embedder.current!, lastSource.current, face.landmarks);
         const { width, height } = sourceDimensions(lastSource.current);
         const thumbnail = captureFaceThumbnail(lastSource.current, face.box, width, height) ?? undefined;
