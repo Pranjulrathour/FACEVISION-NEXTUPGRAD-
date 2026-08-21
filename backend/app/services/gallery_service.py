@@ -13,11 +13,17 @@ def enroll_face(
     embedding: List[float],
     model_version: Optional[str],
     user_session_id: Optional[str],
+    image: Optional[str] = None,
 ) -> FaceGalleryEntry:
     """Enroll one embedding sample under `name`. Reuses an existing entry
     with the same name+session if one exists (so enrolling a second photo
     of the same person adds a sample rather than creating a duplicate
-    identity), otherwise creates a new gallery entry."""
+    identity), otherwise creates a new gallery entry.
+
+    `image`, when given, (re)sets the entry's reference photo -- enrolling
+    another sample with a fresh image replaces the old thumbnail; enrolling
+    without one (image=None) leaves whatever photo is already stored
+    untouched rather than clearing it."""
     entry = (
         db.query(FaceGalleryEntry)
         .filter(
@@ -27,9 +33,11 @@ def enroll_face(
         .first()
     )
     if entry is None:
-        entry = FaceGalleryEntry(name=name, user_session_id=user_session_id)
+        entry = FaceGalleryEntry(name=name, user_session_id=user_session_id, image_data=image)
         db.add(entry)
         db.flush()
+    elif image is not None:
+        entry.image_data = image
 
     sample = GalleryFaceSample(
         gallery_id=entry.id,

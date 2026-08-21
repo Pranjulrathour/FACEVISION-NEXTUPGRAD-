@@ -53,6 +53,30 @@ def test_enroll_list_recognize_delete_full_lifecycle(client):
     assert list_after_delete.json()["total"] == 0
 
 
+def test_enroll_with_an_image_returns_it_and_persists_it_through_list(client):
+    session_id = _session_id()
+    tiny_image = "data:image/jpeg;base64,/9j/AAA="
+
+    enroll_response = client.post(
+        "/api/v1/gallery/enroll",
+        json={"name": "Alice", "embedding": _embedding(1.0), "userSessionId": session_id, "image": tiny_image},
+    )
+    assert enroll_response.status_code == 200
+    assert enroll_response.json()["image"] == tiny_image
+
+    list_response = client.get("/api/v1/gallery", params={"userSessionId": session_id})
+    assert list_response.json()["items"][0]["image"] == tiny_image
+
+
+def test_enroll_without_an_image_returns_null(client):
+    session_id = _session_id()
+    response = client.post(
+        "/api/v1/gallery/enroll",
+        json={"name": "Alice", "embedding": _embedding(1.0), "userSessionId": session_id},
+    )
+    assert response.json()["image"] is None
+
+
 def test_recognize_with_no_enrollments_returns_no_match(client):
     session_id = _session_id()
     response = client.post(

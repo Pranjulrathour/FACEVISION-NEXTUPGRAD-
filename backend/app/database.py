@@ -31,6 +31,7 @@ _IDEMPOTENT_COLUMN_MIGRATIONS = (
     "ALTER TABLE gallery_face_samples ADD COLUMN IF NOT EXISTS embedding JSONB",
     "ALTER TABLE gallery_face_samples ADD COLUMN IF NOT EXISTS model_version VARCHAR(64)",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255)",
+    "ALTER TABLE face_gallery ADD COLUMN IF NOT EXISTS image_data TEXT",
 )
 
 

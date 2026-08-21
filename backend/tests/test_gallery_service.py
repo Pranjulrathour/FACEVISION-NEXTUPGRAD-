@@ -53,6 +53,28 @@ def test_list_gallery_without_session_filter_returns_everyone(db):
     assert total == 2
 
 
+def test_enroll_stores_the_reference_image(db):
+    entry = gallery_service.enroll_face(db, "Alice", _embedding(1.0), "v1", "session-1", image="data:image/jpeg;base64,AAA")
+    assert entry.image_data == "data:image/jpeg;base64,AAA"
+
+
+def test_enroll_without_an_image_leaves_it_unset(db):
+    entry = gallery_service.enroll_face(db, "Alice", _embedding(1.0), "v1", "session-1")
+    assert entry.image_data is None
+
+
+def test_enrolling_another_sample_with_a_new_image_replaces_the_old_one(db):
+    gallery_service.enroll_face(db, "Alice", _embedding(1.0), "v1", "session-1", image="data:image/jpeg;base64,OLD")
+    entry = gallery_service.enroll_face(db, "Alice", _embedding(1.1), "v1", "session-1", image="data:image/jpeg;base64,NEW")
+    assert entry.image_data == "data:image/jpeg;base64,NEW"
+
+
+def test_enrolling_another_sample_without_an_image_keeps_the_existing_one(db):
+    gallery_service.enroll_face(db, "Alice", _embedding(1.0), "v1", "session-1", image="data:image/jpeg;base64,OLD")
+    entry = gallery_service.enroll_face(db, "Alice", _embedding(1.1), "v1", "session-1")
+    assert entry.image_data == "data:image/jpeg;base64,OLD"
+
+
 def test_rename_gallery_entry_updates_the_name(db):
     entry = gallery_service.enroll_face(db, "Alice", _embedding(1.0), "v1", "session-1")
     renamed = gallery_service.rename_gallery_entry(db, entry.id, "Alicia", "session-1")

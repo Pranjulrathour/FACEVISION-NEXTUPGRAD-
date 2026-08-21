@@ -783,7 +783,13 @@ the whole git history.*
     FaceDetector` (§5), so a new implementation only needs to satisfy that interface. The
     `useRef<YuNetDetector>` type in `face-vision.tsx` would still need widening to
     `FaceDetector` to make the swap truly drop-in.
-16. **Where are face images stored?** Nowhere — never leave the browser.
+16. **Where are face images stored?** Plain face *detections* never leave the browser. Gallery
+    *enrollment* is the one exception, as of [ADR 0007](adr/0007-gallery-reference-photo.md): a
+    small (~200×200) JPEG reference photo is stored per enrolled identity
+    (`face_gallery.image_data`) so the Gallery panel can show what each person looks like — a
+    deliberate, later reversal of this app's original "embedding only, never an image" design,
+    made explicitly rather than defaulted into. The embedding vector remains the only thing
+    actually used for recognition; the photo is a display-only aid.
 17. **Retention?** Enforceable via `RETENTION_DAYS` + purge script; documented concretely in
     [docs/privacy-retention-policy.md](privacy-retention-policy.md). Still opt-in/unset by
     default, so the honest default answer is "kept until manually cleared" unless an operator

@@ -45,3 +45,13 @@ def test_is_safe_to_run_repeatedly_when_columns_already_exist():
     assert _column_exists("detection_records", "model_version") is True
     assert _column_exists("gallery_face_samples", "embedding") is True
     assert _column_exists("users", "password_hash") is True
+    assert _column_exists("face_gallery", "image_data") is True
+
+
+def test_adds_the_gallery_image_column_that_was_dropped_to_simulate_pre_existing_drift():
+    _drop_column_if_exists("face_gallery", "image_data")
+    assert _column_exists("face_gallery", "image_data") is False
+
+    apply_idempotent_column_migrations()
+
+    assert _column_exists("face_gallery", "image_data") is True

@@ -33,6 +33,7 @@ def _to_response(entry) -> GalleryEntryResponse:
         sampleCount=len(entry.samples),
         createdAt=entry.created_at,
         updatedAt=entry.updated_at,
+        image=entry.image_data,
     )
 
 
@@ -53,6 +54,7 @@ def enroll(
         embedding=payload.embedding,
         model_version=payload.modelVersion,
         user_session_id=scope_id,
+        image=payload.image,
     )
     return _to_response(entry)
 

@@ -13,6 +13,7 @@ import type {
   RecognitionLabel,
 } from "@/lib/face-types";
 import { loadImage, validateImage, validateImageSignature } from "@/lib/image";
+import { captureFaceThumbnail } from "@/lib/face-crop";
 import { YuNetDetector } from "@/lib/yunet";
 import { SFaceEmbedder } from "@/lib/sface";
 import { MiniFASNetClassifier } from "@/lib/minifasnet";
@@ -469,7 +470,9 @@ export function FaceVision() {
       setGalleryBusy(true);
       try {
         const vector = await embedFace(embedder.current!, lastSource.current, face.landmarks);
-        const entry = await api.enrollFace(name.trim(), vector, embedder.current!.modelVersion);
+        const { width, height } = sourceDimensions(lastSource.current);
+        const thumbnail = captureFaceThumbnail(lastSource.current, face.box, width, height) ?? undefined;
+        const entry = await api.enrollFace(name.trim(), vector, embedder.current!.modelVersion, thumbnail);
         if (entry) {
           setStatus(`Enrolled "${name.trim()}" (${entry.sampleCount} sample${entry.sampleCount === 1 ? "" : "s"}).`);
           // Reflect the name immediately rather than waiting for the next
@@ -1264,8 +1267,9 @@ export function FaceVision() {
             <button className="ghost-btn" onClick={() => void refreshGallery()}>↻ Refresh</button>
           </div>
           <p className="lede">
-            Enroll and recognize faces using SFace — a real trained embedding model. Only the
-            embedding vector (128 numbers) is ever sent to the backend — never an image.{" "}
+            Enroll and recognize faces using SFace — a real trained embedding model. A small
+            reference photo is stored alongside each identity so you can tell them apart at a
+            glance.{" "}
             <small className="muted">
               Model: {embedderStatus === "ready" ? "loaded" : embedderStatus === "loading" ? "loading…" : "not loaded yet"}
             </small>
@@ -1287,6 +1291,12 @@ export function FaceVision() {
             <div className="history-list">
               {galleryEntries.map((entry) => (
                 <div key={entry.id} className="history-item gallery-entry">
+                  {entry.image ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={entry.image} alt="" className="history-thumb" />
+                  ) : (
+                    <div className="history-thumb placeholder">👤</div>
+                  )}
                   <div className="history-body">
                     <div className="history-title">
                       <strong>{entry.name}</strong>

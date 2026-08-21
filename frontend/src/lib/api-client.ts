@@ -144,7 +144,8 @@ export const api = {
   async enrollFace(
     name: string,
     embedding: Float32Array | number[],
-    modelVersion?: string
+    modelVersion?: string,
+    image?: string
   ): Promise<GalleryEntry | null> {
     return request<GalleryEntry>("/gallery/enroll", {
       method: "POST",
@@ -153,6 +154,7 @@ export const api = {
         embedding: Array.from(embedding),
         modelVersion,
         userSessionId: getSessionId(),
+        image,
       }),
     });
   },

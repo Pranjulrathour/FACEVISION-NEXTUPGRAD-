@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, JSON
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, JSON, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -18,6 +18,13 @@ class FaceGalleryEntry(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(100), nullable=False)
     user_session_id = Column(String(128), index=True, nullable=True)
+    # A small reference photo (data URL: "data:image/jpeg;base64,...") for
+    # telling identities apart at a glance in the gallery list. Optional --
+    # entries enrolled before this existed, or without a usable crop, have
+    # none. Storing an actual image here is a deliberate departure from
+    # this app's earlier "embedding only, never an image" design -- see
+    # docs/privacy-retention-policy.md for what that trade-off means.
+    image_data = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

@@ -136,7 +136,7 @@ FACEVISION/
 | 🖼️ **Workspace** | Upload or live camera → face cards, confidence badges, annotated PNG export |
 | 🕐 **History** | Thumbnail timeline of the last 100 detections, click to reload |
 | 📈 **Stats** | KPI cards + 7-day trend chart |
-| 🗂️ **Gallery** | Enroll a face under a name (real SFace embedding) → every future sighting auto-labels as that name or **"Not registered"**, tied to your account |
+| 🗂️ **Gallery** | Enroll a face under a name (real SFace embedding, plus a small reference photo) → every future sighting auto-labels as that name or **"Not registered"**, tied to your account. Rename or delete any enrolled identity |
 | 🕵️ **Check Liveness** | Per-face button running MiniFASNet V2 anti-spoofing, client-side |
 | ⚙️ **Settings** | Toggle history, labels, landmarks, colors, thresholds |
 

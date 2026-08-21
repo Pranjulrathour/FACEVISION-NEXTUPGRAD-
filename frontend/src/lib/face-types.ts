@@ -72,6 +72,9 @@ export type GalleryEntry = {
   sampleCount: number;
   createdAt: string;
   updatedAt: string;
+  /** A small reference-photo data URL, or null/absent if none was
+   * captured (e.g. entries enrolled before this existed). */
+  image?: string | null;
 };
 
 export type RecognitionResult = {

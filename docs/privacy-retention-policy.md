@@ -25,11 +25,19 @@ backend is configured and reachable (`NEXT_PUBLIC_API_URL` is set and the app ca
   makes recognition against that identity possible later.
 - The name the user typed for that identity (`face_gallery.name`) — chosen freely by the user,
   not verified against any real-world identity document.
+- **A small reference photo** (`face_gallery.image_data`, a JPEG data URL, roughly 200×200px) —
+  so the Gallery panel can show what each enrolled identity actually looks like instead of just
+  a name. This is a deliberate, later change from this app's original "embedding only, never an
+  image" design (see the note below) and is real stored biometric imagery, not metadata; the
+  trade-off was made explicitly, not defaulted into.
 - This only happens on an explicit "Enroll" action; it is never automatic.
 
-**Raw image pixels are never sent to, or stored by, the backend, in either case.** Detection and
-embedding computation both run entirely in the browser; only the metadata/vectors above are
-optionally persisted, and only when the user takes an explicit action.
+**Detection metadata never includes raw image pixels.** Detection and embedding computation both
+run entirely in the browser; for plain face *detections* (as opposed to gallery *enrollment*,
+above), only the geometric metadata/vectors described earlier is ever persisted, and only when
+the user takes an explicit action. Gallery enrollment is the one exception to "no image ever
+stored" in this app, and it's confined to a small, deliberately downsized thumbnail — not the
+original photo or video frame.
 
 **If a user explicitly registers an account** (checklist §15/§16 — see
 [ADR 0003](adr/0003-minifasnet-liveness-and-jwt-auth.md)):

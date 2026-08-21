@@ -14,11 +14,19 @@ EMBEDDING_DIMENSION = 128
 DEFAULT_MATCH_THRESHOLD = 0.363
 
 
+# A modest cap on the base64 data-URL string -- generous enough for a
+# small compressed thumbnail (the frontend downsizes before sending; see
+# frontend/src/lib/face-crop.ts's captureFaceThumbnail()) while still
+# rejecting an attempt to smuggle a large payload through this field.
+MAX_IMAGE_DATA_URL_LENGTH = 300_000
+
+
 class EnrollRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     embedding: List[float] = Field(..., min_length=EMBEDDING_DIMENSION, max_length=EMBEDDING_DIMENSION)
     modelVersion: Optional[str] = None
     userSessionId: Optional[str] = None
+    image: Optional[str] = Field(default=None, max_length=MAX_IMAGE_DATA_URL_LENGTH)
 
 
 class RenameRequest(BaseModel):
@@ -34,6 +42,7 @@ class GalleryEntryResponse(BaseModel):
     sampleCount: int
     createdAt: datetime
     updatedAt: datetime
+    image: Optional[str] = None
 
 
 class GalleryListResponse(BaseModel):

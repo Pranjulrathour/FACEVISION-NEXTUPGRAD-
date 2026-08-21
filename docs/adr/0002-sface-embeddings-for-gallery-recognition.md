@@ -6,6 +6,12 @@ Accepted. Supersedes [ADR 0001](0001-landmark-similarity-vs-embeddings.md) **onl
 gallery enroll/recognize feature** — the original Compare panel still uses landmark-geometry
 similarity (ADR 0001 remains accurate for that feature specifically).
 
+**Note:** the "raw images still never leave the browser" claim in this ADR's Consequences
+section was true when written, but no longer holds for gallery enrollment specifically — see
+[ADR 0007](0007-gallery-reference-photo.md), which made storing a small reference photo an
+explicit, later decision. This ADR is left as-is as the historical record of what was decided at
+the time; it does not describe the current behavior of that one claim.
+
 ## Context
 
 ADR 0001 documented that FaceVision had no trained face-embedding model and used landmark
