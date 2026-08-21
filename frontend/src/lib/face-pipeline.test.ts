@@ -9,6 +9,7 @@ import {
   LivenessCheckError,
 } from "./face-pipeline";
 import { LivenessHeuristic } from "./liveness";
+import { runInferenceExclusive } from "./inference-mutex";
 import type { FaceDetector } from "./face-detector";
 import type { FaceEmbedder } from "./face-embedder";
 import type { AntiSpoofClassifier } from "./anti-spoof-classifier";
@@ -133,6 +134,55 @@ describe("runDetectionPipeline", () => {
     await expect(
       runDetectionPipeline(detector, image, 1000, 1000, { inferenceTimeoutMs: 20 })
     ).rejects.toThrow(FacePipelineError);
+  });
+
+  it("does not queue detect() behind a pending embed()/classify() call when the detector is on webgpu", async () => {
+    // Regression coverage for a real production report: the camera preview
+    // visibly froze every ~5s (whenever auto-recognition fired), because
+    // detect() and embed() shared one global queue unconditionally -- a
+    // slow embed() call blocked every detect() call behind it. The
+    // embedder/classifier are wasm-only by design specifically so a
+    // webgpu-backed detector never has to wait for them. Occupies the
+    // shared queue directly (rather than via embedFace(), which needs a
+    // real DOM to align a face -- unavailable in this test environment)
+    // to isolate exactly the behavior under test: does a webgpu detect()
+    // still bypass whatever's holding the queue?
+    const events: string[] = [];
+    let releaseQueue!: () => void;
+    const queueOccupied = runInferenceExclusive(
+      () =>
+        new Promise<void>((resolve) => {
+          events.push("queue-holder start");
+          releaseQueue = () => {
+            events.push("queue-holder end");
+            resolve();
+          };
+        })
+    );
+    // Give it a tick to actually start and claim the queue.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(events).toEqual(["queue-holder start"]);
+
+    const webgpuDetector: FaceDetector = {
+      initialize: vi.fn().mockResolvedValue("webgpu"),
+      detect: vi.fn().mockImplementation(async () => {
+        events.push("detect start");
+        events.push("detect end");
+        return [makeFace()];
+      }),
+      provider: "webgpu",
+      modelVersion: "fake-detector-v1",
+    };
+    const image = makeFakeImage(1000, 1000);
+
+    // detect() must complete WITHOUT waiting for the queue to free up.
+    await runDetectionPipeline(webgpuDetector, image, 1000, 1000);
+    expect(events).toEqual(["queue-holder start", "detect start", "detect end"]);
+
+    releaseQueue();
+    await queueOccupied;
+    expect(events).toEqual(["queue-holder start", "detect start", "detect end", "queue-holder end"]);
   });
 
   it("does not time out when detection resolves well within the limit", async () => {

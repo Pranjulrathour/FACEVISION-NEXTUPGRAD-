@@ -91,23 +91,16 @@ export class MiniFASNetClassifier implements AntiSpoofClassifier {
   async initialize(): Promise<"webgpu" | "wasm"> {
     this.ort = await import("onnxruntime-web");
     this.ort.env.wasm.numThreads = 1;
-    try {
-      this.session = await this.ort.InferenceSession.create(MINIFASNET_MODEL_URL, {
-        executionProviders: ["webgpu"],
-        graphOptimizationLevel: "all",
-        logSeverityLevel: 3,
-      });
-      this.activeProvider = "webgpu";
-      return "webgpu";
-    } catch {
-      this.session = await this.ort.InferenceSession.create(MINIFASNET_MODEL_URL, {
-        executionProviders: ["wasm"],
-        graphOptimizationLevel: "all",
-        logSeverityLevel: 3,
-      });
-      this.activeProvider = "wasm";
-      return "wasm";
-    }
+    // wasm-only, same rationale as SFaceEmbedder.initialize() -- keeps this
+    // model off the detector's webgpu session entirely, since two webgpu
+    // sessions racing was the actual production crash, not a hypothetical.
+    this.session = await this.ort.InferenceSession.create(MINIFASNET_MODEL_URL, {
+      executionProviders: ["wasm"],
+      graphOptimizationLevel: "all",
+      logSeverityLevel: 3,
+    });
+    this.activeProvider = "wasm";
+    return "wasm";
   }
 
   async classify(patch: ImageData): Promise<AntiSpoofResult> {

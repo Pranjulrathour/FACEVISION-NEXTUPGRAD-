@@ -27,6 +27,11 @@ import {
 import { LivenessHeuristic } from "@/lib/liveness";
 import { shouldAutoRecognize } from "@/lib/recognition-throttle";
 import {
+  nextRecognitionStreak,
+  shouldApplyRecognitionResult,
+  type RecognitionStreak,
+} from "@/lib/recognition-stability";
+import {
   saveDetection as saveLocal,
   getHistory as getLocalHistory,
   clearHistory as clearLocalHistory,
@@ -122,6 +127,11 @@ export function FaceVision() {
     lastCheckedAt: {},
     inFlight: new Set(),
   });
+  /** Per-face-slot streak state for runRecognitionCheck's hysteresis (see
+   * recognition-stability.ts) -- a ref for the same reason as the throttle
+   * state above: it's bookkeeping the auto-recognition loop reads and
+   * writes on every tick, not something that should trigger a re-render. */
+  const recognitionStreaks = useRef<Record<number, RecognitionStreak>>({});
 
   const [authSession, setAuthSession] = useState<AuthSession | null>(() => getStoredSession());
   /** Gates rendering the camera UI until we know the stored session (if
@@ -500,42 +510,69 @@ export function FaceVision() {
       if (!lastSource.current) return;
       recognizeThrottle.current.inFlight.add(faceIdx);
       recognizeThrottle.current.lastCheckedAt[faceIdx] = Date.now();
-      // Set "checking" before the (possibly slow, first-load-only) embedder
-      // model finishes loading -- otherwise a face sits with no feedback at
-      // all for the several seconds SFace's ~37MB model takes to load once,
-      // which reads as "recognition isn't doing anything."
-      setRecognizedNames((prev) => ({ ...prev, [faceIdx]: { status: "checking" } }));
+      const hasConfirmedLabel = () => {
+        const current = recognizedNamesRef.current[faceIdx];
+        return !!current && current.status !== "checking";
+      };
+      // Once a label is confirmed, a silent recheck runs quietly -- no
+      // "checking" flash -- so a single borderline blip can't even
+      // visibly pass through before potentially being discarded below.
+      // Manual clicks always show it; there's nothing confirmed to
+      // protect from a check the user explicitly just asked for.
+      if (!silent || !hasConfirmedLabel()) {
+        setRecognizedNames((prev) => ({ ...prev, [faceIdx]: { status: "checking" } }));
+      }
       if (!silent) setGalleryBusy(true);
       try {
         if (!(await prepareEmbedder())) {
+          if (!hasConfirmedLabel()) {
+            setRecognizedNames((prev) => {
+              const next = { ...prev };
+              delete next[faceIdx];
+              return next;
+            });
+          }
+          return;
+        }
+        const vector = await embedFace(embedder.current!, lastSource.current, face.landmarks);
+        const result = await api.recognizeFace(vector);
+        const rawLabel: RecognitionLabel =
+          result?.matched && result.name
+            ? { status: "matched", name: result.name, similarity: result.similarity }
+            : { status: "unregistered" };
+        const resultKey = rawLabel.status === "matched" ? `matched:${rawLabel.name}` : "unregistered";
+
+        if (!silent) {
+          // An explicit, user-requested check always shows exactly what
+          // was just found -- no smoothing -- and resets the streak so
+          // subsequent silent auto-checks build on this fresh baseline.
+          recognitionStreaks.current[faceIdx] = { key: resultKey, count: 1 };
+          setRecognizedNames((prev) => ({ ...prev, [faceIdx]: rawLabel }));
+          setStatus(
+            rawLabel.status === "matched"
+              ? `Recognized as "${rawLabel.name}" (${Math.round(rawLabel.similarity * 100)}% similarity).`
+              : "Not registered — no match found in your gallery for this face."
+          );
+        } else {
+          const streak = nextRecognitionStreak(recognitionStreaks.current[faceIdx], resultKey);
+          recognitionStreaks.current[faceIdx] = streak;
+          // A lone disagreeing check keeps showing the previously
+          // confirmed label instead of flickering to this one -- it only
+          // takes over once it's repeated enough to be a real change,
+          // not a one-frame fluctuation near the match threshold.
+          if (shouldApplyRecognitionResult(streak, hasConfirmedLabel())) {
+            setRecognizedNames((prev) => ({ ...prev, [faceIdx]: rawLabel }));
+          }
+        }
+      } catch (err) {
+        console.error("[FaceVision] Recognition failed:", err);
+        if (!hasConfirmedLabel()) {
           setRecognizedNames((prev) => {
             const next = { ...prev };
             delete next[faceIdx];
             return next;
           });
-          return;
         }
-        const vector = await embedFace(embedder.current!, lastSource.current, face.landmarks);
-        const result = await api.recognizeFace(vector);
-        if (result?.matched && result.name) {
-          setRecognizedNames((prev) => ({
-            ...prev,
-            [faceIdx]: { status: "matched", name: result.name!, similarity: result.similarity },
-          }));
-          if (!silent) {
-            setStatus(`Recognized as "${result.name}" (${Math.round(result.similarity * 100)}% similarity).`);
-          }
-        } else {
-          setRecognizedNames((prev) => ({ ...prev, [faceIdx]: { status: "unregistered" } }));
-          if (!silent) setStatus("Not registered — no match found in your gallery for this face.");
-        }
-      } catch (err) {
-        console.error("[FaceVision] Recognition failed:", err);
-        setRecognizedNames((prev) => {
-          const next = { ...prev };
-          delete next[faceIdx];
-          return next;
-        });
         if (!silent) {
           // Only ever show the raw error message for our own, deliberately
           // worded error types. Anything else (e.g. an internal ONNX
@@ -622,6 +659,7 @@ export function FaceVision() {
         setFaces(found);
         setRecognizedNames({});
         recognizeThrottle.current = { lastCheckedAt: {}, inFlight: new Set() };
+        recognitionStreaks.current = {};
         setAntiSpoofResults({});
         persistCurrent(found);
         // A shown face should always end up labeled "Recognized" or "Not
@@ -1065,7 +1103,7 @@ export function FaceVision() {
                         <small className={`recognized-label ${recognition.status}`}>
                           {recognition.status === "matched" && `Recognized: ${recognition.name}`}
                           {recognition.status === "unregistered" && "Not registered"}
-                          {recognition.status === "checking" && "Checking…"}
+                          {recognition.status === "checking" && "Scanning…"}
                         </small>
                       )}
                       {antiSpoofResults[i] && (
@@ -1075,16 +1113,18 @@ export function FaceVision() {
                       )}
                     </div>
                     <div className="face-card-actions">
-                      <button
-                        className="chip chip-enroll"
-                        disabled={galleryBusy}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void enrollFace(face);
-                        }}
-                      >
-                        Enroll
-                      </button>
+                      {mode !== "camera" && (
+                        <button
+                          className="chip chip-enroll"
+                          disabled={galleryBusy}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void enrollFace(face);
+                          }}
+                        >
+                          Save
+                        </button>
+                      )}
                       <button
                         className="chip chip-recognize"
                         disabled={galleryBusy}

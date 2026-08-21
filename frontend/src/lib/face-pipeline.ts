@@ -142,20 +142,31 @@ export async function runDetectionPipeline(
   // module here. See yunet.ts for that stage's implementation. Wrapped in
   // a timeout (§12) so a stuck inference call can't hang the pipeline
   // forever with no signal back to the caller.
+  const timeoutMs = options.inferenceTimeoutMs ?? DEFAULT_INFERENCE_TIMEOUT_MS;
+  const runDetect = () =>
+    withTimeout(
+      detector.detect(source, width, height, options.confidenceThreshold, options.nmsThreshold),
+      timeoutMs,
+      `Face detection timed out after ${timeoutMs}ms.`
+    );
+  // The embedder and liveness classifier are wasm-only by design (see
+  // sface.ts/minifasnet.ts), specifically so they never contend with the
+  // detector's own webgpu session -- that GPU-session contention (not a
+  // generic "any two models at once" issue) was the actual production
+  // crash. So the detector only needs to queue behind them here if it
+  // ALSO ended up on wasm (no webgpu support on this device/browser),
+  // meaning it would otherwise share the same wasm runtime state. On
+  // webgpu, detect() runs unblocked -- queuing it unconditionally behind
+  // embed()/classify() was what caused the camera preview to visibly
+  // freeze every time auto-recognition fired.
+  //
   // runInferenceExclusive wraps the *timeout-bounded* call, not the raw
   // one -- if it wrapped the raw detector.detect() call instead, a single
   // truly stuck inference (the exact case this timeout exists to survive)
   // would leave the shared queue permanently blocked on a promise that
   // never settles, deadlocking every future detect()/embed()/classify()
   // call in the app, not just this one.
-  const timeoutMs = options.inferenceTimeoutMs ?? DEFAULT_INFERENCE_TIMEOUT_MS;
-  const faces = await runInferenceExclusive(() =>
-    withTimeout(
-      detector.detect(source, width, height, options.confidenceThreshold, options.nmsThreshold),
-      timeoutMs,
-      `Face detection timed out after ${timeoutMs}ms.`
-    )
-  );
+  const faces = await (detector.provider === "webgpu" ? runDetect() : runInferenceExclusive(runDetect));
 
   // --- Quality Assessment stage (+ Face Crop) ---
   // The bounding box on each detected Face already describes its crop

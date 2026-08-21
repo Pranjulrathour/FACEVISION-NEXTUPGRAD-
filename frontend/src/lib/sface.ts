@@ -64,23 +64,23 @@ export class SFaceEmbedder implements FaceEmbedder {
   async initialize(): Promise<"webgpu" | "wasm"> {
     this.ort = await import("onnxruntime-web");
     this.ort.env.wasm.numThreads = 1;
-    try {
-      this.session = await this.ort.InferenceSession.create(SFACE_MODEL_URL, {
-        executionProviders: ["webgpu"],
-        graphOptimizationLevel: "all",
-        logSeverityLevel: 3,
-      });
-      this.activeProvider = "webgpu";
-      return "webgpu";
-    } catch {
-      this.session = await this.ort.InferenceSession.create(SFACE_MODEL_URL, {
-        executionProviders: ["wasm"],
-        graphOptimizationLevel: "all",
-        logSeverityLevel: 3,
-      });
-      this.activeProvider = "wasm";
-      return "wasm";
-    }
+    // Deliberately wasm-only, not webgpu-then-fallback like the detector --
+    // this model runs on a periodic timer (auto-recognition) and manual
+    // clicks, concurrently with the detector's own continuous webgpu
+    // session in camera mode. Two sessions sharing one GPU device/queue
+    // was observed in production to corrupt state ("Session already
+    // started", "Session mismatch"), not just throw a catchable error.
+    // Keeping this on wasm means it never contends with the detector's
+    // webgpu session at all, so the detector's camera loop no longer has
+    // to pause for it (see inference-mutex.ts for the remaining wasm-side
+    // guard between this and the liveness classifier, which needs it).
+    this.session = await this.ort.InferenceSession.create(SFACE_MODEL_URL, {
+      executionProviders: ["wasm"],
+      graphOptimizationLevel: "all",
+      logSeverityLevel: 3,
+    });
+    this.activeProvider = "wasm";
+    return "wasm";
   }
 
   async embed(alignedFace: ImageData): Promise<Float32Array> {
